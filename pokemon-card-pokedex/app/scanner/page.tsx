@@ -1,15 +1,14 @@
-import { ScannerClient } from '@/components/ScannerClient';
+import CameraScanner from "@/components/scanner/camera-scanner";
 
 export default function ScannerPage() {
   return (
-    <main className="page">
-      <div className="container grid">
-        <div>
-          <h1>Scanner de cartas</h1>
-          <p className="small">Sube una URL pública de la imagen, extrae texto con OCR, compara con PriceCharting y guarda la carta en el inventario.</p>
-        </div>
-        <ScannerClient />
-      </div>
+    <main className="mx-auto max-w-5xl p-6">
+      <h1 className="mb-2 text-3xl font-bold">Escáner de cartas Pokémon</h1>
+      <p className="mb-6 text-sm text-gray-600">
+        Usa la cámara del equipo para capturar una carta, reconocerla y guardarla en tu inventario.
+      </p>
+
+      <CameraScanner />
     </main>
   );
 }
