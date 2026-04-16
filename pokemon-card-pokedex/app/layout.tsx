@@ -1,20 +1,18 @@
-import './globals.css';
-import type { Metadata } from 'next';
-import { Navbar } from '@/components/Navbar';
+import "./globals.css";
 
-export const metadata: Metadata = {
-  title: 'Pokedex TCG',
-  description: 'Inventario personal de cartas Pokémon con valorización usando PriceCharting.'
+export const metadata = {
+  title: "PokemonScan",
+  description: "Escáner de cartas Pokémon con cámara e inventario",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
   return (
-    <html lang="es">
-      <body>
-        <Navbar />
-        {children}
-        <footer className="container footer">Pokedex TCG · MVP base para GitHub + Supabase + PriceCharting</footer>
-      </body>
+    <html lang="es" suppressHydrationWarning>
+      <body suppressHydrationWarning>{children}</body>
     </html>
   );
 }
