@@ -1,30 +1,15 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { extractTextFromImage } from '@/services/scanner/ocr';
-import { parseCardText } from '@/services/scanner/parse-card-text';
+import { NextResponse } from "next/server";
+import { createWorker } from "tesseract.js";
 
-export async function POST(request: NextRequest) {
-  try {
-    const { imageUrl } = await request.json();
+export async function POST(req: Request) {
+  const { imageBase64 } = await req.json();
 
-    if (!imageUrl) {
-      return NextResponse.json({ error: 'imageUrl es obligatorio' }, { status: 400 });
-    }
+  const worker = await createWorker("eng");
+  const { data } = await worker.recognize(imageBase64);
+  await worker.terminate();
 
-    const text = await extractTextFromImage(imageUrl);
-    const parsed = parseCardText(text);
-
-    return NextResponse.json(parsed);
-  } catch (error) {
-    console.error(error);
-    return NextResponse.json(
-      {
-        error: 'No se pudo procesar la imagen. Puedes continuar con búsqueda manual.',
-        extractedText: '',
-        detectedName: '',
-        detectedNumber: '',
-        detectedSet: ''
-      },
-      { status: 200 }
-    );
-  }
+  return NextResponse.json({
+    text: data.text,
+    name: data.text.split("\n")[0],
+  });
 }
