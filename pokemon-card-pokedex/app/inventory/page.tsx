@@ -1,4 +1,4 @@
-import { supabaseAdmin } from "@/lib/supabase/server";
+import { createClient } from "@/lib/supabase/server";
 
 type SearchParams = Promise<{ userId?: string }>;
 
@@ -10,7 +10,9 @@ export default async function InventoryPage(props: { searchParams: SearchParams 
   let totalValue = 0;
 
   if (userId) {
-    const { data, error } = await supabaseAdmin
+    const supabase = await createClient();
+
+    const { data, error } = await supabase
       .from("user_cards")
       .select(`
         id,
@@ -98,12 +100,8 @@ export default async function InventoryPage(props: { searchParams: SearchParams 
                   <td className="border-b px-4 py-3">
                     {row.card_catalog?.variant || "-"}
                   </td>
-                  <td className="border-b px-4 py-3">
-                    {row.condition}
-                  </td>
-                  <td className="border-b px-4 py-3">
-                    {row.quantity}
-                  </td>
+                  <td className="border-b px-4 py-3">{row.condition}</td>
+                  <td className="border-b px-4 py-3">{row.quantity}</td>
                   <td className="border-b px-4 py-3">
                     ${Number(row.estimated_unit_value || 0).toFixed(2)}
                   </td>
