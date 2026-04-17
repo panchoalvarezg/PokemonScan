@@ -8,17 +8,15 @@ type SearchCardVariantsParams = {
 
 type ApiCard = Record<string, any>;
 
-export type VariantResult = {
+type VariantResult = {
   externalId: string;
   name: string;
   set: string;
   variant: string;
-  type: string;
-  imageUrl: string;
-  cardNumber: string;
+  rarity: string;
+  cardType: string;
   price: number | null;
   confidence: number;
-  raw: ApiCard;
 };
 
 const API_BASE_URL = "https://www.pokemonpricetracker.com/api/v2";
@@ -50,30 +48,6 @@ function detectVariantLabel(card: ApiCard) {
   );
 }
 
-function detectTypeLabel(card: ApiCard) {
-  const types = card.types;
-  if (Array.isArray(types) && types.length > 0) {
-    return types.map((t) => safeString(t)).filter(Boolean).join(" / ");
-  }
-  return (
-    safeString(card.type) ||
-    safeString(card.pokemonType) ||
-    safeString(card.element) ||
-    ""
-  );
-}
-
-function detectImage(card: ApiCard) {
-  return (
-    safeString(card.imageUrl) ||
-    safeString(card.image) ||
-    safeString(card.images?.large) ||
-    safeString(card.images?.small) ||
-    safeString(card.image_url) ||
-    ""
-  );
-}
-
 function extractPrice(card: ApiCard) {
   const candidates = [
     card.price,
@@ -84,21 +58,32 @@ function extractPrice(card: ApiCard) {
     card.currentPrice,
     card.prices?.raw,
     card.prices?.market,
-    card.prices?.holofoil?.market,
-    card.prices?.normal?.market,
-    card.prices?.reverseHolofoil?.market,
-    card.tcgplayer?.prices?.normal?.market,
-    card.tcgplayer?.prices?.holofoil?.market,
   ];
 
   for (const value of candidates) {
-    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "number") return value;
     if (typeof value === "string" && value.trim() !== "" && !isNaN(Number(value))) {
       return Number(value);
     }
   }
 
   return null;
+}
+
+function extractRarity(card: ApiCard) {
+  return (
+    safeString(card.rarity) ||
+    safeString(card.rarityName) ||
+    safeString(card.cardRarity) ||
+    "Unknown"
+  );
+}
+
+function extractCardType(card: ApiCard) {
+  if (typeof card.type === "string") return card.type;
+  if (Array.isArray(card.types) && typeof card.types[0] === "string") return card.types[0];
+  if (Array.isArray(card.types) && typeof card.types[0]?.name === "string") return card.types[0].name;
+  return safeString(card.cardType) || safeString(card.primaryType) || "Unknown";
 }
 
 function scoreVariant(card: ApiCard, params: SearchCardVariantsParams) {
@@ -126,31 +111,6 @@ function scoreVariant(card: ApiCard, params: SearchCardVariantsParams) {
   }
 
   return score;
-}
-
-function mapCardToVariant(card: ApiCard, params?: SearchCardVariantsParams): VariantResult {
-  const name = safeString(card.name || card.cardName || card.title || "Carta sin nombre");
-  const set = safeString(card.set || card.setName || card.expansion);
-  const variant = detectVariantLabel(card);
-  const type = detectTypeLabel(card);
-  const imageUrl = detectImage(card);
-  const cardNumber = safeString(card.number);
-  const externalId = safeString(card.id || card.cardId || card.slug || name);
-  const price = extractPrice(card);
-  const confidence = params ? scoreVariant(card, params) : 0;
-
-  return {
-    externalId,
-    name,
-    set,
-    variant,
-    type,
-    imageUrl,
-    cardNumber,
-    price,
-    confidence,
-    raw: card,
-  };
 }
 
 export async function searchCardVariants(
@@ -193,24 +153,27 @@ export async function searchCardVariants(
         : [];
 
   return cards
-    .map((card) => mapCardToVariant(card, params))
+    .map((card) => {
+      const name = safeString(card.name || card.cardName || card.title || "Carta sin nombre");
+      const set = safeString(card.set || card.setName || card.expansion);
+      const variant = detectVariantLabel(card);
+      const externalId = safeString(card.id || card.cardId || card.slug || name);
+      const price = extractPrice(card);
+      const rarity = extractRarity(card);
+      const cardType = extractCardType(card);
+      const confidence = scoreVariant(card, params);
+
+      return {
+        externalId,
+        name,
+        set,
+        variant,
+        rarity,
+        cardType,
+        price,
+        confidence,
+      };
+    })
     .sort((a, b) => b.confidence - a.confidence)
     .slice(0, 5);
-}
-
-/**
- * Refresca el precio de una carta buscándola por su nombre + número exactos.
- * Se usa en el cron/endpoint de refresh.
- */
-export async function refreshCardPrice(externalId: string, name: string, cardNumber?: string) {
-  const params: SearchCardVariantsParams = {
-    detectedName: name,
-    detectedNumber: cardNumber ?? "",
-    detectedSet: "",
-    extractedText: name,
-    detectedVariantHints: [],
-  };
-  const variants = await searchCardVariants(params);
-  const match = variants.find((v) => v.externalId === externalId) ?? variants[0];
-  return match ?? null;
 }
