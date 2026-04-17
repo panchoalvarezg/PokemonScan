@@ -1,98 +1,144 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
-import { apiFetch } from "@/lib/api-client";
-import { currency } from "@/lib/utils";
-import type { ValuationSummary } from "@/types";
+import { useEffect, useState } from "react";
 
-export function DashboardClient() {
-  const [summary, setSummary] = useState<ValuationSummary | null>(null);
-  const [message, setMessage] = useState("");
+type ValuationResponse = {
+  totalInventoryValue: number;
+  totalCards: number;
+  distinctEntries: number;
+  avgCardValue: number;
+  byType: Record<string, number>;
+  byRarity: Record<string, number>;
+  error?: string;
+};
+
+export default function DashboardClient() {
+  const [data, setData] = useState<ValuationResponse | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [userEmail, setUserEmail] = useState<string | null>(null);
-  const [userId, setUserId] = useState<string | null>(null);
-
-  const loadSummary = useCallback(async (uid: string) => {
-    try {
-      const response = await apiFetch(`/api/valuation?userId=${uid}`, {
-        cache: "no-store",
-      });
-      const data = await response.json();
-      if (!response.ok)
-        throw new Error(data?.error || "No se pudo cargar la valorización.");
-      setSummary(data);
-      setMessage("Valorización cargada.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Error desconocido.");
-    }
-  }, []);
 
   useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getUser().then(({ data }) => {
-      setUserEmail(data.user?.email ?? null);
-      setUserId(data.user?.id ?? null);
-      if (data.user?.id) loadSummary(data.user.id);
-    });
-  }, [loadSummary]);
+    async function loadValuation() {
+      try {
+        setLoading(true);
+        setError("");
 
-  if (!userEmail) {
+        const response = await fetch("/api/valuation", {
+          method: "GET",
+          credentials: "include",
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(result.error || "No se pudo cargar el dashboard.");
+        }
+
+        setData(result);
+      } catch (err) {
+        console.error(err);
+        setError(
+          err instanceof Error ? err.message : "Error cargando dashboard."
+        );
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadValuation();
+  }, []);
+
+  if (loading) {
     return (
-      <div className="card">
-        <p>
-          Debes{" "}
-          <a href="/login" className="brand">
-            iniciar sesión
-          </a>{" "}
-          para ver tu dashboard.
-        </p>
+      <div className="rounded-xl border p-6">
+        <p className="text-sm text-gray-600">Cargando dashboard...</p>
       </div>
     );
   }
 
+  if (error) {
+    return (
+      <div className="rounded-xl border border-red-300 bg-red-50 p-6 text-red-700">
+        {error}
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="rounded-xl border p-6">
+        <p className="text-sm text-gray-600">No hay datos disponibles.</p>
+      </div>
+    );
+  }
+
+  const sortedTypes = Object.entries(data.byType || {}).sort((a, b) => b[1] - a[1]);
+  const sortedRarities = Object.entries(data.byRarity || {}).sort((a, b) => b[1] - a[1]);
+
   return (
-    <div className="grid">
-      <div className="card form">
-        <div className="flex justify-between items-center">
-          <div>
-            <p className="font-bold">Valoración de {userEmail}</p>
-            <p className="small">
-              El valor total se actualiza cuando refrescas precios o agregas
-              cartas nuevas.
-            </p>
-          </div>
-          <button
-            className="button"
-            onClick={() => userId && loadSummary(userId)}
-          >
-            Recalcular
-          </button>
+    <div className="space-y-6">
+      <div className="grid gap-4 md:grid-cols-4">
+        <div className="rounded-xl border p-4">
+          <p className="text-sm text-gray-600">Valor total</p>
+          <p className="text-2xl font-bold">${data.totalInventoryValue.toFixed(2)}</p>
         </div>
-        {message && <div className="notice">{message}</div>}
-        {error && <div className="error">{error}</div>}
-      </div>
 
-      <div className="grid grid-3">
-        <div className="card kpi">
-          <span className="label">Entradas distintas</span>
-          <span className="value">{summary?.distinctEntries ?? 0}</span>
+        <div className="rounded-xl border p-4">
+          <p className="text-sm text-gray-600">Total cartas</p>
+          <p className="text-2xl font-bold">{data.totalCards}</p>
         </div>
-        <div className="card kpi">
-          <span className="label">Cantidad total de cartas</span>
-          <span className="value">{summary?.totalCards ?? 0}</span>
+
+        <div className="rounded-xl border p-4">
+          <p className="text-sm text-gray-600">Entradas distintas</p>
+          <p className="text-2xl font-bold">{data.distinctEntries}</p>
         </div>
-        <div className="card kpi">
-          <span className="label">Valor total estimado</span>
-          <span className="value">
-            {currency(summary?.totalInventoryValue ?? 0)}
-          </span>
+
+        <div className="rounded-xl border p-4">
+          <p className="text-sm text-gray-600">Valor promedio</p>
+          <p className="text-2xl font-bold">${data.avgCardValue.toFixed(2)}</p>
         </div>
       </div>
 
-      <div className="card kpi">
-        <span className="label">Valor promedio por carta</span>
-        <span className="value">{currency(summary?.averageCardValue ?? 0)}</span>
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="rounded-xl border p-4">
+          <h2 className="mb-3 text-lg font-semibold">Tipos predominantes</h2>
+
+          {sortedTypes.length === 0 ? (
+            <p className="text-sm text-gray-600">Sin datos de tipos.</p>
+          ) : (
+            <div className="space-y-2">
+              {sortedTypes.map(([type, count]) => (
+                <div
+                  key={type}
+                  className="flex items-center justify-between rounded-md bg-gray-50 px-3 py-2"
+                >
+                  <span>{type}</span>
+                  <span className="font-semibold">{count}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-xl border p-4">
+          <h2 className="mb-3 text-lg font-semibold">Rarezas</h2>
+
+          {sortedRarities.length === 0 ? (
+            <p className="text-sm text-gray-600">Sin datos de rareza.</p>
+          ) : (
+            <div className="space-y-2">
+              {sortedRarities.map(([rarity, count]) => (
+                <div
+                  key={rarity}
+                  className="flex items-center justify-between rounded-md bg-gray-50 px-3 py-2"
+                >
+                  <span>{rarity}</span>
+                  <span className="font-semibold">{count}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
