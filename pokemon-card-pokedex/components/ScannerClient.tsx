@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { createWorker } from "tesseract.js";
+import { useEffect, useRef, useState } from "react";
+import { createWorker, PSM } from "tesseract.js";
 
 type VariantItem = {
   externalId: string;
@@ -28,11 +28,35 @@ type ScanData = {
 export default function ScannerClient() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const workerRef = useRef<any>(null);
 
   const [loading, setLoading] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
   const [error, setError] = useState("");
   const [scanData, setScanData] = useState<ScanData | null>(null);
   const [matchData, setMatchData] = useState<MatchResponse | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (workerRef.current) {
+        workerRef.current.terminate();
+        workerRef.current = null;
+      }
+    };
+  }, []);
+
+  async function getWorker() {
+    if (workerRef.current) return workerRef.current;
+
+    const worker = await createWorker("eng");
+    await worker.setParameters({
+      tessedit_pageseg_mode: PSM.SPARSE_TEXT,
+      preserve_interword_spaces: "1",
+    });
+
+    workerRef.current = worker;
+    return worker;
+  }
 
   async function startCamera() {
     try {
@@ -41,6 +65,8 @@ export default function ScannerClient() {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: "environment" },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
         },
         audio: false,
       });
@@ -48,6 +74,7 @@ export default function ScannerClient() {
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
+        setCameraReady(true);
       }
     } catch (err) {
       console.error(err);
@@ -84,12 +111,50 @@ export default function ScannerClient() {
     ];
 
     for (const keyword of keywords) {
-      if (lower.includes(keyword)) {
-        hints.push(keyword);
-      }
+      if (lower.includes(keyword)) hints.push(keyword);
     }
 
     return hints;
+  }
+
+  function chooseBestName(lines: string[]) {
+    const blacklist = [
+      "hp",
+      "weakness",
+      "resistance",
+      "retreat",
+      "attack",
+      "ability",
+      "trainer",
+      "energy",
+      "basic",
+      "stage",
+      "pokemon power",
+      "rain splash",
+      "seashell attack",
+    ];
+
+    const scored = lines
+      .map((line) => {
+        const clean = line.trim();
+        const lower = clean.toLowerCase();
+
+        let score = 0;
+
+        if (/^[A-Za-z][A-Za-z0-9\-'. ]{2,24}$/.test(clean)) score += 50;
+        if (/^[A-Z][a-z]+([ -][A-Z]?[a-z]+)*$/.test(clean)) score += 25;
+        if (clean.length >= 4 && clean.length <= 18) score += 20;
+        if (/\d/.test(clean)) score -= 15;
+
+        for (const word of blacklist) {
+          if (lower.includes(word)) score -= 30;
+        }
+
+        return { clean, score };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    return scored[0]?.clean || "";
   }
 
   function extractCardData(text: string): ScanData {
@@ -99,11 +164,11 @@ export default function ScannerClient() {
       .map((line) => line.trim())
       .filter(Boolean);
 
-    const detectedName =
-      lines.find((line) => /^[A-Za-z0-9\-\.' ]{3,40}$/.test(line)) || "";
+    const detectedName = chooseBestName(lines);
 
     const numberMatch =
       normalized.match(/\b([A-Z]{0,3}\d{1,3}\/[A-Z]{0,3}\d{1,3})\b/i) ||
+      normalized.match(/\b(\d{1,3}\/\d{1,3})\b/i) ||
       normalized.match(/\b([A-Z]{0,3}\d{1,3})\b/i);
 
     const setKeywords = [
@@ -118,6 +183,7 @@ export default function ScannerClient() {
       "Obsidian Flames",
       "Paldea Evolved",
       "Scarlet & Violet",
+      "Black & White",
     ];
 
     const detectedSet =
@@ -132,6 +198,62 @@ export default function ScannerClient() {
       detectedSet,
       detectedVariantHints: detectVariantHints(normalized),
     };
+  }
+
+  function preprocessCenterCrop(video: HTMLVideoElement, canvas: HTMLCanvasElement) {
+    const fullW = video.videoWidth || 1280;
+    const fullH = video.videoHeight || 720;
+
+    canvas.width = fullW;
+    canvas.height = fullH;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    ctx.drawImage(video, 0, 0, fullW, fullH);
+
+    const cropW = Math.floor(fullW * 0.62);
+    const cropH = Math.floor(fullH * 0.78);
+    const cropX = Math.floor((fullW - cropW) / 2);
+    const cropY = Math.floor((fullH - cropH) / 2);
+
+    const cropCanvas = document.createElement("canvas");
+    cropCanvas.width = cropW;
+    cropCanvas.height = cropH;
+    const cropCtx = cropCanvas.getContext("2d");
+    if (!cropCtx) return null;
+
+    cropCtx.drawImage(
+      canvas,
+      cropX,
+      cropY,
+      cropW,
+      cropH,
+      0,
+      0,
+      cropW,
+      cropH
+    );
+
+    const imageData = cropCtx.getImageData(0, 0, cropW, cropH);
+    const data = imageData.data;
+
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+
+      const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+      const boosted = gray > 150 ? 255 : gray < 90 ? 0 : gray;
+
+      data[i] = boosted;
+      data[i + 1] = boosted;
+      data[i + 2] = boosted;
+    }
+
+    cropCtx.putImageData(imageData, 0, 0);
+
+    return cropCanvas.toDataURL("image/jpeg", 0.95);
   }
 
   async function captureAndAnalyze() {
@@ -149,22 +271,14 @@ export default function ScannerClient() {
         return;
       }
 
-      canvas.width = video.videoWidth || 1280;
-      canvas.height = video.videoHeight || 720;
-
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        setError("No se pudo obtener el contexto del canvas.");
+      const imageBase64 = preprocessCenterCrop(video, canvas);
+      if (!imageBase64) {
+        setError("No se pudo preparar la imagen.");
         return;
       }
 
-      ctx.drawImage(video, 0, 0);
-
-      const imageBase64 = canvas.toDataURL("image/jpeg", 0.92);
-
-      const worker = await createWorker("eng");
+      const worker = await getWorker();
       const { data } = await worker.recognize(imageBase64);
-      await worker.terminate();
 
       const extracted = extractCardData(data.text || "");
       setScanData(extracted);
@@ -206,7 +320,7 @@ export default function ScannerClient() {
 
         <button
           onClick={captureAndAnalyze}
-          disabled={loading}
+          disabled={loading || !cameraReady}
           className="rounded-md bg-green-700 px-4 py-2 text-white disabled:opacity-50"
         >
           {loading ? "Analizando..." : "Capturar y detectar"}
@@ -228,7 +342,7 @@ export default function ScannerClient() {
           className="w-full rounded-xl border bg-black"
         />
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="h-[68%] w-[58%] rounded-xl border-4 border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.22)]" />
+          <div className="h-[78%] w-[62%] rounded-xl border-4 border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.22)]" />
         </div>
       </div>
 
@@ -237,7 +351,6 @@ export default function ScannerClient() {
       {scanData && (
         <div className="rounded-xl border p-4">
           <h2 className="mb-3 text-xl font-semibold">Datos detectados</h2>
-
           <div className="space-y-2 text-sm">
             <p><strong>Pokémon detectado:</strong> {scanData.detectedName || "-"}</p>
             <p><strong>Número detectado:</strong> {scanData.detectedNumber || "-"}</p>
@@ -264,10 +377,7 @@ export default function ScannerClient() {
           ) : (
             <div className="grid gap-3">
               {matchData.variants.map((variant) => (
-                <div
-                  key={variant.externalId}
-                  className="rounded-lg border p-4"
-                >
+                <div key={variant.externalId} className="rounded-lg border p-4">
                   <p className="font-semibold">{variant.name}</p>
                   <p className="text-sm text-gray-600">Set: {variant.set || "-"}</p>
                   <p className="text-sm text-gray-600">
@@ -279,13 +389,6 @@ export default function ScannerClient() {
                   <p className="text-sm text-gray-600">
                     Confianza: {variant.confidence}
                   </p>
-
-                  <button
-                    className="mt-3 rounded-md bg-blue-700 px-4 py-2 text-white"
-                    onClick={() => alert(`Elegiste: ${variant.name}`)}
-                  >
-                    Esta es mi carta
-                  </button>
                 </div>
               ))}
             </div>
