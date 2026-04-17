@@ -310,20 +310,22 @@ export default function ScannerClient() {
     setError("");
     setStatus("");
     try {
+      // `selected` es el Variant escogido del listado. El server identifica
+      // al usuario por el Bearer token que inyecta apiFetch (ver lib/auth.ts),
+      // así que no hace falta mandar userId desde el cliente.
       const res = await apiFetch("/api/inventory", {
         method: "POST",
         body: JSON.stringify({
-          userId,
-          externalId: match.externalId,
-          productName: match.name,
-          setName: match.set,
-          cardNumber: scanData?.detectedNumber || null,
-          rarity: match.rarity || null,
-          cardType: match.cardType || null,
-          variant: match.variant || null,
+          externalId: selected.externalId,
+          productName: selected.name,
+          setName: selected.set || null,
+          cardNumber: selected.cardNumber || manualNumber.trim() || null,
+          cardType: selected.type || manualType.trim() || null,
+          rarity: selected.variant || null,
+          imageUrl: selected.imageUrl || null,
           condition,
           quantity,
-          estimatedUnitValue: match.price ?? 0,
+          estimatedUnitValue: selected.price ?? 0,
         }),
       });
       const data = await res.json();

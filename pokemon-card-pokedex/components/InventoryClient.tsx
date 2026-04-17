@@ -83,6 +83,15 @@ export function InventoryClient() {
     "recent" | "value_desc" | "value_asc" | "name" | "quantity"
   >("recent");
   const [showStats, setShowStats] = useState(true);
+  // Modo de visualización del registro: tabla compacta (todo a la vista) o
+  // galería (foto grande + ficha tipo carta física). La galería es lo que más
+  // ayuda a distinguir cartas cuando la colección crece.
+  const [viewMode, setViewMode] = useState<"table" | "gallery">("table");
+
+  // Selección múltiple para enviar cartas en bloque a Intercambios.
+  // Usamos Set<string> para operaciones O(1) al marcar/desmarcar filas.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const loadInventory = useCallback(async () => {
     setLoading(true);
@@ -136,6 +145,74 @@ export function InventoryClient() {
     setMessage("Carta eliminada.");
     loadInventory();
     loadStats();
+  }
+
+  /**
+   * Cambia el estado `for_trade` de una sola carta. Optimistic UI: pintamos
+   * el cambio de inmediato y si el PATCH falla lo revertimos.
+   */
+  async function toggleForTrade(id: string, next: boolean) {
+    setError("");
+    const prev = items;
+    setItems((curr) =>
+      curr.map((it) => (it.id === id ? { ...it, for_trade: next } : it))
+    );
+    try {
+      const res = await apiFetch(`/api/inventory/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ for_trade: next }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "No se pudo actualizar.");
+      setMessage(
+        next ? "Carta marcada para intercambio." : "Carta quitada de intercambio."
+      );
+    } catch (err) {
+      // Revertir si falla
+      setItems(prev);
+      setError(err instanceof Error ? err.message : "Error desconocido.");
+    }
+  }
+
+  /**
+   * Actualiza `for_trade` en bloque para todas las cartas seleccionadas.
+   * Usa /api/inventory/bulk que aplica un único UPDATE en el server.
+   */
+  async function bulkSetForTrade(next: boolean) {
+    if (selectedIds.size === 0) return;
+    setBulkBusy(true);
+    setError("");
+    const ids = [...selectedIds];
+    try {
+      const res = await apiFetch("/api/inventory/bulk", {
+        method: "PATCH",
+        body: JSON.stringify({ ids, for_trade: next }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "No se pudo actualizar.");
+      setItems((curr) =>
+        curr.map((it) => (selectedIds.has(it.id) ? { ...it, for_trade: next } : it))
+      );
+      setMessage(
+        next
+          ? `Enviadas ${data.updated} carta(s) a Intercambios.`
+          : `Quitadas ${data.updated} carta(s) de Intercambios.`
+      );
+      setSelectedIds(new Set());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error desconocido.");
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }
 
   async function refreshPrices() {
@@ -252,6 +329,33 @@ export function InventoryClient() {
     }
     return { entries: filteredItems.length, cards, value };
   }, [filteredItems]);
+
+  // Resumen de las cartas seleccionadas (para la barra de acciones bulk).
+  const selectionSummary = useMemo(() => {
+    let cards = 0;
+    let value = 0;
+    let tradeOn = 0;
+    for (const it of items) {
+      if (!selectedIds.has(it.id)) continue;
+      cards += Number(it.quantity);
+      value += Number(it.estimated_total_value);
+      if (it.for_trade) tradeOn += 1;
+    }
+    return {
+      entries: selectedIds.size,
+      cards,
+      value,
+      allForTrade: tradeOn === selectedIds.size && selectedIds.size > 0,
+      anyForTrade: tradeOn > 0,
+    };
+  }, [items, selectedIds]);
+
+  const visibleIds = useMemo(
+    () => filteredItems.map((it) => it.id),
+    [filteredItems]
+  );
+  const allVisibleSelected =
+    visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
 
   function resetFilters() {
     setSearch("");
@@ -397,6 +501,45 @@ export function InventoryClient() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <div
+              role="tablist"
+              aria-label="Modo de vista"
+              className="inline-flex rounded overflow-hidden border border-gray-300"
+            >
+              <button
+                role="tab"
+                aria-selected={viewMode === "table"}
+                className={`px-3 py-1 text-sm ${
+                  viewMode === "table"
+                    ? "bg-blue-600 text-white"
+                    : "bg-white text-gray-700"
+                }`}
+                onClick={() => setViewMode("table")}
+                title="Ver como tabla"
+              >
+                Tabla
+              </button>
+              <button
+                role="tab"
+                aria-selected={viewMode === "gallery"}
+                className={`px-3 py-1 text-sm ${
+                  viewMode === "gallery"
+                    ? "bg-blue-600 text-white"
+                    : "bg-white text-gray-700"
+                }`}
+                onClick={() => setViewMode("gallery")}
+                title="Ver como galería con foto grande"
+              >
+                Galería
+              </button>
+            </div>
+            <a
+              className="button secondary"
+              href="/collections"
+              title="Ver las cartas agrupadas por expansión"
+            >
+              Colecciones
+            </a>
             <button
               className="button secondary"
               onClick={() => setShowStats((s) => !s)}
@@ -583,84 +726,357 @@ export function InventoryClient() {
         )}
       </div>
 
-      <div className="card table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th></th>
-              <th>Carta</th>
-              <th>Expansión</th>
-              <th>Tipo</th>
-              <th>Rareza</th>
-              <th>Condición</th>
-              <th>Cantidad</th>
-              <th>Valor unitario</th>
-              <th>Valor total</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredItems.length === 0 && !loading ? (
+      {/* Barra de acciones bulk (sólo visible si hay algo seleccionado). */}
+      {selectedIds.size > 0 && (
+        <div
+          className="card"
+          style={{
+            borderColor: "#93c5fd",
+            background: "#eff6ff",
+          }}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="font-bold">
+                {selectionSummary.entries} seleccionadas ·{" "}
+                {selectionSummary.cards} cartas · valor{" "}
+                {currency(selectionSummary.value)}
+              </p>
+              <p className="small">
+                Envía estas cartas a tu carpeta de Intercambios o quítalas de
+                allí.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                className="button"
+                onClick={() => bulkSetForTrade(true)}
+                disabled={bulkBusy || selectionSummary.allForTrade}
+                title={
+                  selectionSummary.allForTrade
+                    ? "Todas ya están en Intercambios"
+                    : "Marcar las seleccionadas para intercambio"
+                }
+              >
+                {bulkBusy ? "Guardando…" : "Mover a Intercambios"}
+              </button>
+              <button
+                className="button secondary"
+                onClick={() => bulkSetForTrade(false)}
+                disabled={bulkBusy || !selectionSummary.anyForTrade}
+                title="Quitar las seleccionadas de Intercambios"
+              >
+                Quitar de Intercambios
+              </button>
+              <button
+                className="button secondary"
+                onClick={() => setSelectedIds(new Set())}
+                disabled={bulkBusy}
+              >
+                Limpiar selección
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {viewMode === "table" ? (
+        <div className="card table-wrap">
+          <table>
+            <thead>
               <tr>
-                <td colSpan={10} className="small" style={{ textAlign: "center" }}>
-                  {items.length === 0 ? (
-                    <>
-                      Aún no tienes cartas. Ve al{" "}
-                      <a className="brand" href="/scanner">
-                        escáner
-                      </a>
-                      .
-                    </>
-                  ) : (
-                    "Ninguna carta coincide con los filtros."
-                  )}
-                </td>
+                <th style={{ width: 32 }}>
+                  <input
+                    type="checkbox"
+                    aria-label="Seleccionar todas las cartas visibles"
+                    checked={allVisibleSelected}
+                    onChange={(e) => {
+                      setSelectedIds((prev) => {
+                        const next = new Set(prev);
+                        if (e.target.checked) {
+                          for (const id of visibleIds) next.add(id);
+                        } else {
+                          for (const id of visibleIds) next.delete(id);
+                        }
+                        return next;
+                      });
+                    }}
+                  />
+                </th>
+                <th></th>
+                <th>Carta</th>
+                <th>Expansión</th>
+                <th>Tipo</th>
+                <th>Rareza</th>
+                <th>Condición</th>
+                <th>Cantidad</th>
+                <th>Valor unitario</th>
+                <th>Valor total</th>
+                <th title="Marcar para intercambio">Intercambio</th>
+                <th></th>
               </tr>
-            ) : null}
-            {filteredItems.map((item) => (
-              <tr key={item.id}>
-                <td>
-                  {item.image_url ? (
-                    <img
-                      src={item.image_url}
-                      alt={item.product_name}
-                      style={{
-                        width: 40,
-                        height: 56,
-                        objectFit: "contain",
-                        borderRadius: 4,
-                      }}
+            </thead>
+            <tbody>
+              {filteredItems.length === 0 && !loading ? (
+                <tr>
+                  <td colSpan={12} className="small" style={{ textAlign: "center" }}>
+                    {items.length === 0 ? (
+                      <>
+                        Aún no tienes cartas. Ve al{" "}
+                        <a className="brand" href="/scanner">
+                          escáner
+                        </a>
+                        .
+                      </>
+                    ) : (
+                      "Ninguna carta coincide con los filtros."
+                    )}
+                  </td>
+                </tr>
+              ) : null}
+              {filteredItems.map((item) => (
+                <tr
+                  key={item.id}
+                  style={{
+                    background: selectedIds.has(item.id) ? "#eff6ff" : undefined,
+                  }}
+                >
+                  <td>
+                    <input
+                      type="checkbox"
+                      aria-label={`Seleccionar ${item.product_name}`}
+                      checked={selectedIds.has(item.id)}
+                      onChange={() => toggleSelect(item.id)}
                     />
-                  ) : (
-                    "—"
-                  )}
-                </td>
-                <td>
-                  <div style={{ fontWeight: 600 }}>{item.product_name}</div>
-                  {item.card_number ? (
-                    <div className="small">#{item.card_number}</div>
-                  ) : null}
-                </td>
-                <td>{item.set_name ?? "—"}</td>
-                <td>{item.card_type ?? "—"}</td>
-                <td>{item.rarity ?? "—"}</td>
-                <td>{labelCondition(item.condition)}</td>
-                <td>{item.quantity}</td>
-                <td>{currency(Number(item.estimated_unit_value ?? 0))}</td>
-                <td>{currency(Number(item.estimated_total_value ?? 0))}</td>
-                <td>
-                  <button
-                    className="button secondary"
-                    onClick={() => removeItem(item.id)}
-                  >
-                    Eliminar
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                  </td>
+                  <td>
+                    {item.image_url ? (
+                      <img
+                        src={item.image_url}
+                        alt={item.product_name}
+                        style={{
+                          width: 40,
+                          height: 56,
+                          objectFit: "contain",
+                          borderRadius: 4,
+                        }}
+                      />
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td>
+                    <div style={{ fontWeight: 600 }}>{item.product_name}</div>
+                    {item.card_number ? (
+                      <div className="small">#{item.card_number}</div>
+                    ) : null}
+                  </td>
+                  <td>{item.set_name ?? "—"}</td>
+                  <td>{item.card_type ?? "—"}</td>
+                  <td>{item.rarity ?? "—"}</td>
+                  <td>{labelCondition(item.condition)}</td>
+                  <td>{item.quantity}</td>
+                  <td>{currency(Number(item.estimated_unit_value ?? 0))}</td>
+                  <td>{currency(Number(item.estimated_total_value ?? 0))}</td>
+                  <td>
+                    <TradeToggle
+                      active={!!item.for_trade}
+                      onClick={() => toggleForTrade(item.id, !item.for_trade)}
+                    />
+                  </td>
+                  <td>
+                    <button
+                      className="button secondary"
+                      onClick={() => removeItem(item.id)}
+                    >
+                      Eliminar
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <GalleryGrid
+          items={filteredItems}
+          hasAnyItem={items.length > 0}
+          onRemove={removeItem}
+          selectedIds={selectedIds}
+          onToggleSelect={toggleSelect}
+          onToggleTrade={toggleForTrade}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Vista "galería" del registro: muestra cada carta como una ficha con la foto
+ * grande, nombre, set, número, rareza, tipo y totales de valor. Pensada para
+ * cuando el usuario quiere distinguir cartas visualmente en lugar de leer una
+ * tabla larga. Se adapta a móvil (columnas automáticas).
+ */
+function GalleryGrid({
+  items,
+  hasAnyItem,
+  onRemove,
+  selectedIds,
+  onToggleSelect,
+  onToggleTrade,
+}: {
+  items: InventoryItem[];
+  hasAnyItem: boolean;
+  onRemove: (id: string) => void | Promise<void>;
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string) => void;
+  onToggleTrade: (id: string, next: boolean) => void | Promise<void>;
+}) {
+  if (items.length === 0) {
+    return (
+      <div className="card">
+        <p className="small" style={{ textAlign: "center" }}>
+          {hasAnyItem ? (
+            "Ninguna carta coincide con los filtros."
+          ) : (
+            <>
+              Aún no tienes cartas. Ve al{" "}
+              <a className="brand" href="/scanner">
+                escáner
+              </a>
+              .
+            </>
+          )}
+        </p>
       </div>
+    );
+  }
+  return (
+    <div
+      className="grid gap-4"
+      style={{
+        gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+      }}
+    >
+      {items.map((item) => {
+        const unit = Number(item.estimated_unit_value ?? 0);
+        const total = Number(item.estimated_total_value ?? 0);
+        const typeColor = item.card_type
+          ? TYPE_COLOR[item.card_type.split(/[\s,/]+/)[0]]
+          : undefined;
+        const selected = selectedIds.has(item.id);
+        return (
+          <div
+            key={item.id}
+            className="rounded-lg border bg-white p-3 flex flex-col gap-2"
+            style={{
+              minHeight: 340,
+              borderColor: selected ? "#60a5fa" : "#e5e7eb",
+              boxShadow: selected ? "0 0 0 2px #bfdbfe" : undefined,
+            }}
+          >
+            <div
+              className="rounded-md bg-gray-50 flex items-center justify-center overflow-hidden relative"
+              style={{ aspectRatio: "3 / 4" }}
+            >
+              {/* Checkbox superpuesto arriba-izquierda */}
+              <label
+                className="absolute top-1 left-1 bg-white/90 rounded p-1 shadow cursor-pointer"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <input
+                  type="checkbox"
+                  checked={selected}
+                  onChange={() => onToggleSelect(item.id)}
+                  aria-label={`Seleccionar ${item.product_name}`}
+                />
+              </label>
+              {/* Toggle de intercambio arriba-derecha */}
+              <div
+                className="absolute top-1 right-1"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <TradeToggle
+                  active={!!item.for_trade}
+                  onClick={() => onToggleTrade(item.id, !item.for_trade)}
+                  compact
+                />
+              </div>
+              {item.image_url ? (
+                <img
+                  src={item.image_url}
+                  alt={item.product_name}
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "contain",
+                  }}
+                />
+              ) : (
+                <span className="text-xs text-gray-400">Sin imagen</span>
+              )}
+            </div>
+            <div className="flex items-start justify-between gap-2">
+              <div style={{ minWidth: 0 }}>
+                <p
+                  className="font-bold truncate"
+                  title={item.product_name}
+                >
+                  {item.product_name}
+                </p>
+                <p className="small truncate" title={item.set_name ?? ""}>
+                  {item.set_name ?? "Sin expansión"}
+                  {item.card_number ? ` · #${item.card_number}` : ""}
+                </p>
+              </div>
+              {item.quantity > 1 ? (
+                <span className="rounded-full bg-blue-100 text-blue-800 text-xs font-semibold px-2 py-0.5 shrink-0">
+                  ×{item.quantity}
+                </span>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {item.card_type ? (
+                <span
+                  className="rounded-full text-xs px-2 py-0.5"
+                  style={{
+                    background: typeColor ? `${typeColor}22` : "#e5e7eb",
+                    color: typeColor ?? "#374151",
+                    border: typeColor ? `1px solid ${typeColor}55` : "1px solid #d1d5db",
+                  }}
+                >
+                  {item.card_type}
+                </span>
+              ) : null}
+              {item.rarity ? (
+                <span className="rounded-full bg-amber-100 text-amber-800 text-xs px-2 py-0.5">
+                  {item.rarity}
+                </span>
+              ) : null}
+              <span className="rounded-full bg-gray-100 text-gray-700 text-xs px-2 py-0.5">
+                {labelCondition(item.condition)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between mt-auto pt-2 border-t border-gray-100">
+              <div>
+                <p className="text-xs text-gray-500">Unitario</p>
+                <p className="font-semibold">{currency(unit)}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-gray-500">Total</p>
+                <p className="font-semibold">{currency(total)}</p>
+              </div>
+            </div>
+            <button
+              className="button secondary"
+              onClick={() => onRemove(item.id)}
+              style={{ marginTop: 4 }}
+            >
+              Eliminar
+            </button>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -964,4 +1380,50 @@ function MultiSelect({
 
 function unique(arr: string[]): string[] {
   return [...new Set(arr)].sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Botón estrella para marcar / desmarcar una carta como "disponible para
+ * intercambio". En modo `compact` sólo muestra el ícono (ideal para el
+ * corner de la galería); en modo normal muestra ícono + label.
+ */
+function TradeToggle({
+  active,
+  onClick,
+  compact = false,
+}: {
+  active: boolean;
+  onClick: () => void | Promise<void>;
+  compact?: boolean;
+}) {
+  const title = active
+    ? "Disponible para intercambio (click para quitar)"
+    : "Marcar disponible para intercambio";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-pressed={active}
+      className={
+        compact
+          ? `rounded-full p-1 shadow text-sm leading-none ${
+              active
+                ? "bg-amber-400 text-white"
+                : "bg-white/90 text-gray-400 hover:text-amber-500"
+            }`
+          : `rounded-full px-2 py-1 text-xs font-semibold border ${
+              active
+                ? "bg-amber-400 text-white border-amber-500"
+                : "bg-white text-gray-500 border-gray-300 hover:text-amber-500 hover:border-amber-300"
+            }`
+      }
+      style={{ minWidth: compact ? 26 : undefined }}
+    >
+      {active ? "★" : "☆"}
+      {compact ? null : (
+        <span className="ml-1">{active ? "En intercambio" : "Intercambiar"}</span>
+      )}
+    </button>
+  );
 }

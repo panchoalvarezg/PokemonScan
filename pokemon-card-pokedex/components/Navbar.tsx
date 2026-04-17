@@ -34,6 +34,7 @@ export function Navbar() {
         <div className="nav-links">
           <Link href="/scanner">Scanner</Link>
           <Link href="/inventory">Inventario</Link>
+          <Link href="/collections">Colecciones</Link>
           <Link href="/dashboard">Dashboard</Link>
           {email ? (
             <>

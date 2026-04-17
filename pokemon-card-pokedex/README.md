@@ -138,6 +138,7 @@ migraciones desde cero.
 | `/api/inventory/[id]` | DELETE | Elimina una carta del inventario. |
 | `/api/valuation` | GET | Devuelve el resumen (entradas, totales, promedio). |
 | `/api/stats` | GET | Estadísticas del inventario: totales, tipo/rareza/condición/set predominante, top 5. |
+| `/api/collections` | GET | Inventario agrupado por expansión con completitud y valor por set. |
 | `/api/prices/refresh` | GET/POST | Refresca precios contra la API y crea snapshots. |
 
 ## Estructura principal
@@ -150,9 +151,11 @@ app/
     inventory/route.ts
     inventory/[id]/route.ts
     valuation/route.ts
+    collections/route.ts
     prices/refresh/route.ts
   dashboard/page.tsx
   inventory/page.tsx
+  collections/page.tsx
   scanner/page.tsx
   login/page.tsx
   register/page.tsx
@@ -160,6 +163,7 @@ app/
 components/
   ScannerClient.tsx
   InventoryClient.tsx
+  CollectionsClient.tsx
   DashboardClient.tsx
   Navbar.tsx
   AuthForm.tsx
