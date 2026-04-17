@@ -261,8 +261,8 @@ export function AuthForm({ mode }: { mode: Mode }) {
               {otpLoading ? "Enviando código…" : "Enviarme un código"}
             </button>
             <div className="small" style={{ color: "var(--muted)" }}>
-              Te llegará un código de 6 dígitos de un solo uso que caduca en
-              pocos minutos. No necesitas contraseña.
+              Te llegará un código numérico de un solo uso que caduca en pocos
+              minutos. No necesitas contraseña.
             </div>
           </>
         ) : (
@@ -272,19 +272,19 @@ export function AuthForm({ mode }: { mode: Mode }) {
               para entrar.
             </div>
             <div className="field">
-              <label>Código de 6 dígitos</label>
+              <label>Código de verificación</label>
               <input
                 type="text"
                 inputMode="numeric"
                 pattern="[0-9]*"
-                maxLength={6}
+                maxLength={10}
                 value={otpCode}
                 onChange={(e) =>
-                  setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))
+                  setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 10))
                 }
                 required
                 autoComplete="one-time-code"
-                placeholder="••••••"
+                placeholder="••••••••"
                 style={{
                   letterSpacing: "0.4em",
                   textAlign: "center",
