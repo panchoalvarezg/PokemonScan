@@ -152,28 +152,37 @@ export async function searchCardVariants(
         ? data
         : [];
 
-  return cards
-    .map((card) => {
-      const name = safeString(card.name || card.cardName || card.title || "Carta sin nombre");
-      const set = safeString(card.set || card.setName || card.expansion);
-      const variant = detectVariantLabel(card);
-      const externalId = safeString(card.id || card.cardId || card.slug || name);
-      const price = extractPrice(card);
-      const rarity = extractRarity(card);
-      const cardType = extractCardType(card);
-      const confidence = scoreVariant(card, params);
+return allCards
+  .map((card) => {
+    const name = safeString(card.name || card.cardName || card.title || "Carta sin nombre");
+    const set = safeString(card.set || card.setName || card.expansion);
+    const variant = detectVariantLabel(card);
+    const externalId = safeString(card.id || card.cardId || card.slug || name);
+    const price = extractPrice(card);
+    const confidence = scoreVariant(card, params);
 
-      return {
-        externalId,
-        name,
-        set,
-        variant,
-        rarity,
-        cardType,
-        price,
-        confidence,
-      };
-    })
-    .sort((a, b) => b.confidence - a.confidence)
-    .slice(0, 5);
-}
+    const rarity =
+      safeString(card.rarity) ||
+      safeString(card.rarityName) ||
+      safeString(card.prices?.rarity) ||
+      "";
+
+    const cardType =
+      safeString(card.cardType) ||
+      safeString(card.type) ||
+      safeString(card.types?.[0]) ||
+      "";
+
+    return {
+      externalId,
+      name,
+      set,
+      variant,
+      rarity,
+      cardType,
+      price,
+      confidence,
+    };
+  })
+  .sort((a, b) => b.confidence - a.confidence)
+  .slice(0, 5);
