@@ -1,146 +1,297 @@
-'use client';
+"use client";
 
-import { useMemo, useState } from 'react';
-import type { PriceChartingMatch, ScanResult } from '@/types';
+import { useRef, useState } from "react";
+import { createWorker } from "tesseract.js";
 
-const initialScan: ScanResult = {
-  extractedText: '',
-  detectedName: '',
-  detectedNumber: '',
-  detectedSet: ''
+type VariantItem = {
+  externalId: string;
+  name: string;
+  set: string;
+  variant: string;
+  price: number | null;
+  confidence: number;
 };
 
-export function ScannerClient() {
-  const [imageUrl, setImageUrl] = useState('');
-  const [userId, setUserId] = useState('');
-  const [condition, setCondition] = useState('near_mint');
-  const [quantity, setQuantity] = useState(1);
-  const [scan, setScan] = useState<ScanResult>(initialScan);
-  const [matches, setMatches] = useState<PriceChartingMatch[]>([]);
-  const [selectedId, setSelectedId] = useState('');
-  const [status, setStatus] = useState('');
-  const [saving, setSaving] = useState(false);
+type MatchResponse = {
+  variants?: VariantItem[];
+  error?: string;
+};
 
-  const selectedMatch = useMemo(
-    () => matches.find((match) => match.id === selectedId) ?? matches[0],
-    [matches, selectedId]
-  );
+type ScanData = {
+  extractedText: string;
+  detectedName: string;
+  detectedNumber: string;
+  detectedSet: string;
+  detectedVariantHints: string[];
+};
 
-  async function handleScan() {
-    setStatus('Escaneando imagen...');
-    const response = await fetch('/api/scan', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ imageUrl })
-    });
+export default function ScannerClient() {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
-    const data = await response.json();
-    setScan(data);
-    setStatus('Buscando coincidencias en PriceCharting...');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [scanData, setScanData] = useState<ScanData | null>(null);
+  const [matchData, setMatchData] = useState<MatchResponse | null>(null);
 
-    const matchResponse = await fetch('/api/match', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: data.detectedName,
-        number: data.detectedNumber,
-        set: data.detectedSet
-      })
-    });
+  async function startCamera() {
+    try {
+      setError("");
 
-    const matchData = await matchResponse.json();
-    setMatches(matchData.matches ?? []);
-    setSelectedId(matchData.matches?.[0]?.id ?? '');
-    setStatus('Proceso completado. Revisa y guarda.');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: "environment" },
+        },
+        audio: false,
+      });
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo abrir la cámara.");
+    }
   }
 
-  async function handleSave() {
-    if (!selectedMatch || !userId) {
-      setStatus('Necesitas un userId y una coincidencia seleccionada.');
-      return;
+  function normalizeText(text: string) {
+    return text
+      .replace(/\r/g, "\n")
+      .replace(/[^\S\n]+/g, " ")
+      .replace(/\n+/g, "\n")
+      .trim();
+  }
+
+  function detectVariantHints(text: string) {
+    const lower = text.toLowerCase();
+    const hints: string[] = [];
+
+    const keywords = [
+      "promo",
+      "holo",
+      "reverse holo",
+      "full art",
+      "secret rare",
+      "gx",
+      "ex",
+      "v",
+      "vmax",
+      "vstar",
+      "trainer gallery",
+      "illustration rare",
+      "special illustration rare",
+    ];
+
+    for (const keyword of keywords) {
+      if (lower.includes(keyword)) {
+        hints.push(keyword);
+      }
     }
 
-    setSaving(true);
-    const response = await fetch('/api/inventory', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        userId,
-        pricechartingProductId: selectedMatch.id,
-        productName: selectedMatch.productName,
-        setName: scan.detectedSet,
-        cardNumber: scan.detectedNumber,
-        condition,
-        quantity,
-        estimatedUnitValue: selectedMatch.loosePrice ?? 0,
-        imageUrl
-      })
-    });
+    return hints;
+  }
 
-    const data = await response.json();
-    setSaving(false);
-    setStatus(response.ok ? `Carta guardada con id ${data.item.id}` : data.error || 'Error al guardar.');
+  function extractCardData(text: string): ScanData {
+    const normalized = normalizeText(text);
+    const lines = normalized
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    const detectedName =
+      lines.find((line) => /^[A-Za-z0-9\-\.' ]{3,40}$/.test(line)) || "";
+
+    const numberMatch =
+      normalized.match(/\b([A-Z]{0,3}\d{1,3}\/[A-Z]{0,3}\d{1,3})\b/i) ||
+      normalized.match(/\b([A-Z]{0,3}\d{1,3})\b/i);
+
+    const setKeywords = [
+      "Base Set",
+      "Jungle",
+      "Fossil",
+      "Team Rocket",
+      "151",
+      "Crown Zenith",
+      "Evolving Skies",
+      "Paradox Rift",
+      "Obsidian Flames",
+      "Paldea Evolved",
+      "Scarlet & Violet",
+    ];
+
+    const detectedSet =
+      setKeywords.find((setName) =>
+        normalized.toLowerCase().includes(setName.toLowerCase())
+      ) || "";
+
+    return {
+      extractedText: normalized,
+      detectedName,
+      detectedNumber: numberMatch?.[1] || "",
+      detectedSet,
+      detectedVariantHints: detectVariantHints(normalized),
+    };
+  }
+
+  async function captureAndAnalyze() {
+    try {
+      setLoading(true);
+      setError("");
+      setScanData(null);
+      setMatchData(null);
+
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+
+      if (!video || !canvas) {
+        setError("No se pudo acceder al video o canvas.");
+        return;
+      }
+
+      canvas.width = video.videoWidth || 1280;
+      canvas.height = video.videoHeight || 720;
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        setError("No se pudo obtener el contexto del canvas.");
+        return;
+      }
+
+      ctx.drawImage(video, 0, 0);
+
+      const imageBase64 = canvas.toDataURL("image/jpeg", 0.92);
+
+      const worker = await createWorker("eng");
+      const { data } = await worker.recognize(imageBase64);
+      await worker.terminate();
+
+      const extracted = extractCardData(data.text || "");
+      setScanData(extracted);
+
+      const response = await fetch("/api/match", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(extracted),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "No se pudo comparar la carta.");
+      }
+
+      setMatchData(result);
+    } catch (err) {
+      console.error(err);
+      setError(
+        err instanceof Error ? err.message : "Error al analizar la carta."
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
-    <div className="grid grid-2">
-      <div className="card form">
-        <div className="field">
-          <label>URL pública de la imagen</label>
-          <input value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://..." />
-        </div>
-        <div className="field">
-          <label>User ID de Supabase</label>
-          <input value={userId} onChange={(e) => setUserId(e.target.value)} placeholder="uuid del usuario" />
-        </div>
-        <div className="grid grid-2">
-          <div className="field">
-            <label>Condición</label>
-            <select value={condition} onChange={(e) => setCondition(e.target.value)}>
-              <option value="mint">Mint</option>
-              <option value="near_mint">Near Mint</option>
-              <option value="light_played">Light Played</option>
-              <option value="moderate_played">Moderate Played</option>
-              <option value="heavily_played">Heavily Played</option>
-              <option value="damaged">Damaged</option>
-            </select>
-          </div>
-          <div className="field">
-            <label>Cantidad</label>
-            <input type="number" min={1} value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} />
-          </div>
-        </div>
-        <button className="button" type="button" onClick={handleScan}>Escanear y comparar</button>
-        {selectedMatch ? <button className="button secondary" type="button" onClick={handleSave} disabled={saving}>{saving ? 'Guardando...' : 'Guardar en inventario'}</button> : null}
-        {status ? <div className="notice">{status}</div> : null}
+    <div className="space-y-6">
+      <div className="flex flex-wrap gap-3">
+        <button
+          onClick={startCamera}
+          className="rounded-md bg-black px-4 py-2 text-white"
+        >
+          Abrir cámara
+        </button>
+
+        <button
+          onClick={captureAndAnalyze}
+          disabled={loading}
+          className="rounded-md bg-green-700 px-4 py-2 text-white disabled:opacity-50"
+        >
+          {loading ? "Analizando..." : "Capturar y detectar"}
+        </button>
       </div>
 
-      <div className="grid">
-        <div className="card">
-          <h3>Resultado OCR</h3>
-          <p><strong>Nombre:</strong> {scan.detectedName || '—'}</p>
-          <p><strong>Número:</strong> {scan.detectedNumber || '—'}</p>
-          <p><strong>Set:</strong> {scan.detectedSet || '—'}</p>
-          <p className="small">Texto extraído:</p>
-          <div className="code">{scan.extractedText || 'Sin texto detectado todavía.'}</div>
+      {error && (
+        <div className="rounded-md border border-red-300 bg-red-50 p-3 text-red-700">
+          {error}
         </div>
+      )}
 
-        <div className="card">
-          <h3>Coincidencias PriceCharting</h3>
-          <div className="form">
-            {matches.length === 0 ? <p className="small">Aún no hay coincidencias.</p> : null}
-            {matches.map((match) => (
-              <label key={match.id} style={{ display: 'grid', gap: '.35rem', padding: '.75rem', border: '1px solid var(--border)', borderRadius: 12 }}>
-                <div style={{ display: 'flex', gap: '.5rem' }}>
-                  <input type="radio" name="match" checked={(selectedId || matches[0]?.id) === match.id} onChange={() => setSelectedId(match.id)} />
-                  <strong>{match.productName}</strong>
+      <div className="relative max-w-3xl">
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          className="w-full rounded-xl border bg-black"
+        />
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="h-[68%] w-[58%] rounded-xl border-4 border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.22)]" />
+        </div>
+      </div>
+
+      <canvas ref={canvasRef} className="hidden" />
+
+      {scanData && (
+        <div className="rounded-xl border p-4">
+          <h2 className="mb-3 text-xl font-semibold">Datos detectados</h2>
+
+          <div className="space-y-2 text-sm">
+            <p><strong>Pokémon detectado:</strong> {scanData.detectedName || "-"}</p>
+            <p><strong>Número detectado:</strong> {scanData.detectedNumber || "-"}</p>
+            <p><strong>Set detectado:</strong> {scanData.detectedSet || "-"}</p>
+            <p>
+              <strong>Pistas de variante:</strong>{" "}
+              {scanData.detectedVariantHints.length > 0
+                ? scanData.detectedVariantHints.join(", ")
+                : "-"}
+            </p>
+            <p><strong>Texto OCR:</strong> {scanData.extractedText || "-"}</p>
+          </div>
+        </div>
+      )}
+
+      {matchData?.variants && (
+        <div className="rounded-xl border p-4">
+          <h2 className="mb-4 text-xl font-semibold">Variantes encontradas</h2>
+
+          {matchData.variants.length === 0 ? (
+            <p className="text-sm text-gray-600">
+              No se encontraron variantes para esta carta.
+            </p>
+          ) : (
+            <div className="grid gap-3">
+              {matchData.variants.map((variant) => (
+                <div
+                  key={variant.externalId}
+                  className="rounded-lg border p-4"
+                >
+                  <p className="font-semibold">{variant.name}</p>
+                  <p className="text-sm text-gray-600">Set: {variant.set || "-"}</p>
+                  <p className="text-sm text-gray-600">
+                    Variante: {variant.variant || "-"}
+                  </p>
+                  <p className="text-sm text-gray-600">
+                    Precio: {variant.price !== null ? `$${variant.price}` : "-"}
+                  </p>
+                  <p className="text-sm text-gray-600">
+                    Confianza: {variant.confidence}
+                  </p>
+
+                  <button
+                    className="mt-3 rounded-md bg-blue-700 px-4 py-2 text-white"
+                    onClick={() => alert(`Elegiste: ${variant.name}`)}
+                  >
+                    Esta es mi carta
+                  </button>
                 </div>
-                <span className="small">Confidence: {match.confidence} · Precio estimado: USD {match.loosePrice ?? 0}</span>
-              </label>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
-      </div>
+      )}
     </div>
   );
 }
