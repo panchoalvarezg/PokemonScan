@@ -5,5 +5,24 @@
       "path": "/api/prices/refresh?limit=50",
       "schedule": "0 6 * * *"
     }
-  ]
+  ],
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store, max-age=0" }
+      ]
+    }
+  ],
+  "functions": {
+    "app/api/prices/refresh/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/match/route.ts": {
+      "maxDuration": 30
+    },
+    "app/api/scan/route.ts": {
+      "maxDuration": 30
+    }
+  }
 }

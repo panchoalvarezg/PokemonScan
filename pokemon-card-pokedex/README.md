@@ -77,11 +77,78 @@ Obtén un token desde <https://www.pokemonpricetracker.com/> y colócalo en
 `POKEMON_PRICE_TRACKER_API_KEY`. Se usa si la Pokémon TCG API no encuentra la
 carta.
 
-## Despliegue en Vercel
+## Despliegue en Vercel — guía completa
 
-1. Conecta el repositorio de GitHub a Vercel.
-2. Agrega las variables de entorno en **Project → Settings → Environment Variables**.
-3. Vercel detecta `vercel.json` y crea el **Cron Job** que refresca precios a diario (06:00 UTC).
+### 0. Checklist previo
+
+- `npm run typecheck` pasa sin errores.
+- `npm run build` termina sin errores locales (Vercel corre exactamente `next build`).
+- Todas las migraciones SQL están aplicadas en tu proyecto de Supabase (001 → 007). Si saltas alguna, `/api/collections` o `/api/profile` devolverán 500.
+- `.env.local` está en `.gitignore` y **nunca** se pushea.
+- `package.json` fija `engines.node: ">=20.x"` para que Vercel use Node 20.
+
+### 1. Conectar el repositorio
+
+1. Sube el repo a GitHub (`main` como rama protegida).
+2. En <https://vercel.com/new> pulsa **Import Git Repository** y elige el repo.
+3. **Framework preset**: Next.js (Vercel lo detecta automáticamente).
+4. **Root directory**: déjalo vacío. Si la app vive dentro de un subdirectorio (ej. `pokemon-card-pokedex/`), cámbialo aquí.
+5. **Build Command**: `next build` (default). **Install Command**: `npm install` (default). **Output Directory**: `.next` (default).
+6. Pulsa **Deploy**. El primer build fallará si aún no has puesto las variables de entorno; continúa con el paso 2.
+
+### 2. Variables de entorno
+
+En **Project → Settings → Environment Variables** añade:
+
+| Variable | Entornos | Obligatoria | Notas |
+| -------- | -------- | ----------- | ----- |
+| `NEXT_PUBLIC_SUPABASE_URL` | Production, Preview, Development | Sí | URL pública del proyecto Supabase. |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Production, Preview, Development | Sí | Anon key pública. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Production, Preview | Sí | Marca como **Sensitive**. Rompe RLS; no la expongas al cliente. |
+| `POKEMON_TCG_API_KEY` | Production, Preview | Recomendada | Sin key funciona con rate limit bajo. |
+| `POKEMON_PRICE_TRACKER_API_KEY` | Production, Preview | Opcional | Necesaria para el cron y el fallback de precios. |
+| `CRON_SECRET` | Production | Recomendada | Si la defines, el cron exige `Authorization: Bearer <secret>`. Vercel inyecta automáticamente este header en cron jobs declarados en `vercel.json`. |
+| `NEXT_PUBLIC_APP_URL` | Production, Preview | Opcional | No se usa en código actualmente. |
+
+Tras añadirlas haz **Redeploy** (los cambios en `NEXT_PUBLIC_*` sólo se aplican rebuildeando).
+
+### 3. Configuración de Supabase para producción
+
+1. **Authentication → URL Configuration**:
+   - **Site URL**: `https://tu-dominio.vercel.app` (o tu dominio custom).
+   - **Redirect URLs**: añade `https://tu-dominio.vercel.app/auth/callback` y, si quieres que funcionen los previews, también `https://*.vercel.app/auth/callback`.
+2. **Authentication → Providers → Google**: redirect URL `https://<proyecto>.supabase.co/auth/v1/callback` en Google Cloud Console; copia Client ID y Secret a Supabase.
+3. **SQL Editor**: ejecuta en orden `001_init.sql`, `002_policies.sql`, `003_indexes.sql`, `004_card_enrichment.sql`, `005_rarity_stats.sql`, `006_profile_trade.sql`, `007_ensure_detailed_view.sql`.
+4. Verifica que RLS está activo: `select * from pg_policies where schemaname = 'public';`
+
+### 4. Cron Job de precios
+
+`vercel.json` declara un cron diario a las 06:00 UTC que llama a `GET /api/prices/refresh?limit=50`. Vercel inyecta `Authorization: Bearer $CRON_SECRET` automáticamente; la ruta lo valida si la variable existe. Monitoriza en **Project → Observability → Crons**. En el plan Hobby puedes tener 2 cron jobs; en Pro es ilimitado.
+
+### 5. Runtime y funciones
+
+- Todas las rutas de `app/api/*` corren en **Node.js runtime** (no Edge) porque usan `@supabase/supabase-js` con service role.
+- Timeouts declarados en `vercel.json`: `/api/prices/refresh` 60 s, `/api/match` y `/api/scan` 30 s. Hobby permite hasta 60 s, Pro hasta 300 s.
+- Header `Cache-Control: no-store` sobre `/api/*` evita que edge caches sirvan respuestas viejas (crítico para datos por usuario).
+
+### 6. Dominio custom (opcional)
+
+1. **Project → Settings → Domains** → añade `tu-dominio.com`.
+2. Sigue las instrucciones DNS (CNAME o A) que muestre Vercel.
+3. Vuelve a Supabase → Authentication → URL Configuration y **añade** la URL custom sin borrar la `.vercel.app` (mantén las dos por seguridad).
+
+### 7. Preview Deployments
+
+Cada push a una rama genera un preview con URL temporal. Para no mezclar datos reales con pruebas, crea un **proyecto de Supabase aparte** para staging y duplica las variables en "Preview" con los valores del staging.
+
+### 8. Troubleshooting frecuente
+
+- **Build falla con "Cannot find module …"**: import de un archivo no committeado, o path case-sensitive (Linux ≠ macOS).
+- **OAuth Google "redirect_uri_mismatch"**: añade `https://tu-dominio.vercel.app/auth/callback` en Supabase y `https://<proyecto>.supabase.co/auth/v1/callback` en Google Cloud Console.
+- **"Invalid API key" en cliente**: `NEXT_PUBLIC_*` no se inyectó en el build. Tras cambiar cualquier `NEXT_PUBLIC_*` hay que **Redeploy**, no basta con guardar.
+- **`column user_cards_detailed.card_type does not exist` (500 en /collections)**: falta ejecutar `007_ensure_detailed_view.sql` en Supabase.
+- **Cron no se ejecuta**: `vercel.json` tiene que estar en `main` y el proyecto en plan Hobby o superior. Verifica en **Project → Observability → Crons**.
+- **Imagen de carta no carga**: `next.config.ts` permite `remotePatterns: "**"`; si aun así falla, añade el dominio específico.
 
 ## Despliegue dockerizado (Docker Compose)
 

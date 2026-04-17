@@ -105,53 +105,69 @@ textarea {
 
 /* =======================  Chrome de la Pokédex  ======================= */
 
+/*
+ * El dispositivo llena el viewport completo (100dvh) en cualquier tamaño.
+ * Usamos grid `auto 1fr auto` para que topbar y footer ocupen lo que necesiten
+ * y la pantalla crezca y se encargue del scroll. Todos los paddings/tamaños
+ * usan clamp() para escalar suave de móvil a monitor 4K.
+ */
 .pokedex-device {
-  max-width: 1180px;
-  margin: 20px auto;
-  padding: 16px;
-  border-radius: 28px;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  max-width: none;
+  margin: 0;
+  padding: clamp(8px, 1.2vw, 20px);
+  border-radius: 0;
   background:
     radial-gradient(
-      1200px 300px at 50% -5%,
+      1600px 400px at 50% -5%,
       rgba(255, 255, 255, 0.18),
       transparent 60%
     ),
     linear-gradient(180deg, var(--pk-red) 0%, var(--pk-red-dark) 100%);
   box-shadow:
-    0 20px 45px rgba(0, 0, 0, 0.35),
     inset 0 0 0 2px var(--pk-red-deep),
-    inset 0 -6px 12px rgba(0, 0, 0, 0.25);
+    inset 0 -8px 16px rgba(0, 0, 0, 0.28);
   position: relative;
   overflow: hidden;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  row-gap: clamp(6px, 0.8vw, 12px);
 }
 
-/* Franja inferior (imita el "doblez" del Pokédex rojo) */
+/* Franja inferior sutil (imita el "doblez" del Pokédex rojo). Va detrás de
+   todo el contenido del grid para no robar clics. */
 .pokedex-device::after {
   content: "";
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  height: 22px;
+  height: 18px;
   background: linear-gradient(
     180deg,
     rgba(0, 0, 0, 0.12),
     rgba(0, 0, 0, 0.3)
   );
+  pointer-events: none;
+  z-index: 0;
 }
 
 /* Barra superior con la luz circular + 3 LEDs pequeños */
 .pokedex-topbar {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 8px 14px 14px;
+  gap: clamp(8px, 1vw, 14px);
+  padding: clamp(4px, 0.6vw, 10px) clamp(8px, 1vw, 16px) clamp(6px, 0.8vw, 12px);
   color: #fff;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .pokedex-lens {
-  width: 58px;
-  height: 58px;
+  width: clamp(40px, 4.4vw, 62px);
+  height: clamp(40px, 4.4vw, 62px);
   border-radius: 999px;
   background:
     radial-gradient(
@@ -231,61 +247,59 @@ textarea {
   box-shadow: 0 0 10px var(--pk-yellow);
 }
 
-/* Pantalla interior donde vive la app */
+/* Pantalla interior donde vive la app — es el contenedor que hace scroll. */
 .pokedex-screen {
   background: var(--pk-paper-2);
-  border-radius: 20px;
-  border: 6px solid #111;
+  border-radius: clamp(10px, 1.2vw, 22px);
+  border: clamp(3px, 0.4vw, 6px) solid #111;
   box-shadow:
     inset 0 0 0 2px #2a2a2a,
     inset 0 12px 28px rgba(0, 0, 0, 0.12),
     0 4px 0 #5a0411;
   position: relative;
-  overflow: hidden;
-  min-height: calc(100vh - 180px);
+  overflow: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  /* Necesario para que el brillo diagonal no se recorte con el scroll */
+  isolation: isolate;
 }
 
-/* Brillo diagonal sobre la pantalla (muy tenue) */
-.pokedex-screen::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    115deg,
-    rgba(255, 255, 255, 0.35) 0%,
-    rgba(255, 255, 255, 0) 18%,
-    rgba(255, 255, 255, 0) 82%,
-    rgba(255, 255, 255, 0.12) 100%
-  );
-  pointer-events: none;
-  z-index: 1;
-}
-
-.pokedex-screen > * {
-  position: relative;
-  z-index: 2;
-}
+/* (Quitamos el brillo diagonal: al ser la pantalla el scroll container, un
+   overlay absolute se movía con el contenido. Se puede reintroducir como
+   hermano fuera de la pantalla si en el futuro lo queremos.) */
 
 /* Barra inferior: imita botones/D-pad simplificados */
 .pokedex-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 12px 6px;
+  gap: 12px;
+  padding: clamp(8px, 1vw, 16px) clamp(8px, 1vw, 14px) clamp(2px, 0.4vw, 8px);
   color: rgba(255, 255, 255, 0.8);
-  font-size: 0.75rem;
+  font-size: clamp(0.65rem, 0.75vw, 0.78rem);
   letter-spacing: 0.1em;
   text-transform: uppercase;
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
+
+.pokedex-footer > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .pokedex-dpad {
-  width: 58px;
-  height: 58px;
+  width: clamp(42px, 4vw, 58px);
+  height: clamp(42px, 4vw, 58px);
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   grid-template-rows: repeat(3, 1fr);
   gap: 2px;
   opacity: 0.9;
+  flex: 0 0 auto;
 }
 
 .pokedex-dpad span {
@@ -328,23 +342,48 @@ textarea {
   background: radial-gradient(circle at 30% 30%, #8fb3ff, #2048b8 70%);
 }
 
-/* En móvil apretamos el chrome para que no robe mucho espacio */
-@media (max-width: 720px) {
-  .pokedex-device {
-    margin: 0;
-    border-radius: 0;
-    padding: 10px 10px 4px;
+/* Responsive:
+ * - >= 1024px  : diseño completo (chrome + footer decorativo)
+ * - 720–1023px : footer comprimido, sin etiqueta "Cartridge..."
+ * - 480–719px  : ocultamos el footer completo y bajamos padding
+ * - <  480px   : el título de la topbar se oculta para dejar sitio al contenido
+ */
+@media (max-width: 1023px) {
+  .pokedex-footer > span {
+    display: none;
   }
-  .pokedex-screen {
-    border-radius: 14px;
-    border-width: 4px;
+}
+
+@media (max-width: 719px) {
+  .pokedex-device {
+    padding: 8px;
+    row-gap: 6px;
   }
   .pokedex-footer {
     display: none;
   }
-  .pokedex-lens {
-    width: 42px;
-    height: 42px;
+  .pokedex-screen {
+    border-width: 3px;
+  }
+}
+
+@media (max-width: 479px) {
+  .pokedex-device {
+    padding: 6px;
+  }
+  .pokedex-topbar {
+    padding: 4px 6px 6px;
+    gap: 8px;
+  }
+  .pokedex-title {
+    display: none;
+  }
+  .pokedex-leds {
+    gap: 6px;
+  }
+  .pokedex-leds .led {
+    width: 12px;
+    height: 12px;
   }
 }
 

@@ -69,7 +69,8 @@ export async function POST(request: Request) {
           setId: "",
           variant: v.variant,
           type: v.type,
-          imageUrl: v.imageUrl,
+          // TCGVariantResult espera imageUrl:string (no null); coerción segura.
+          imageUrl: v.imageUrl ?? "",
           cardNumber: v.cardNumber,
           price: v.price,
           confidence: v.confidence,
