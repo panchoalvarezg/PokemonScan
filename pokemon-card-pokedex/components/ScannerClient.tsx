@@ -313,15 +313,17 @@ export default function ScannerClient() {
       const res = await apiFetch("/api/inventory", {
         method: "POST",
         body: JSON.stringify({
-          externalId: selected.externalId,
-          productName: selected.name,
-          setName: selected.set,
-          cardNumber: selected.cardNumber,
-          cardType: selected.type || manualType || null,
-          imageUrl: selected.imageUrl,
+          userId,
+          externalId: match.externalId,
+          productName: match.name,
+          setName: match.set,
+          cardNumber: scanData?.detectedNumber || null,
+          rarity: match.rarity || null,
+          cardType: match.cardType || null,
+          variant: match.variant || null,
           condition,
           quantity,
-          estimatedUnitValue: selected.price ?? 0,
+          estimatedUnitValue: match.price ?? 0,
         }),
       });
       const data = await res.json();
