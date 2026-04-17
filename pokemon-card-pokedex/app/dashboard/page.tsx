@@ -1,15 +1,26 @@
-import { DashboardClient } from '@/components/DashboardClient';
+import { redirect } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
+import DashboardClient from "@/components/DashboardClient";
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return redirect("/login");
+  }
+
   return (
-    <main className="page">
-      <div className="container grid">
-        <div>
-          <h1>Dashboard contable</h1>
-          <p className="small">Calcula el valor total estimado del inventario y sus indicadores principales.</p>
-        </div>
-        <DashboardClient />
-      </div>
+    <main className="mx-auto max-w-7xl p-6">
+      <h1 className="mb-2 text-3xl font-bold">Dashboard</h1>
+      <p className="mb-6 text-sm text-gray-600">
+        Resumen de tu colección y valor estimado del inventario.
+      </p>
+
+      <DashboardClient />
     </main>
   );
 }
