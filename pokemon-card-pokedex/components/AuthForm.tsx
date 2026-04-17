@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
@@ -14,6 +14,16 @@ export function AuthForm({ mode }: { mode: Mode }) {
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState(false);
   const router = useRouter();
+
+  // Si el callback de OAuth falló, muestra el mensaje en la propia página.
+  // Usamos window.location en lugar de useSearchParams para evitar requerir
+  // un <Suspense> boundary en Next.js 15.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const oauthErr = params.get("error");
+    if (oauthErr) setError(oauthErr);
+  }, []);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
