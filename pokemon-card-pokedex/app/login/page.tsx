@@ -9,10 +9,6 @@ export default function LoginPage() {
       >
         <div>
           <h1>Iniciar sesión</h1>
-          <p className="small">
-            Entra con Google (SSO), con un código de un solo uso (OTP) enviado
-            a tu email, o con tu email y contraseña clásicos.
-          </p>
         </div>
         <AuthForm mode="login" />
       </div>
