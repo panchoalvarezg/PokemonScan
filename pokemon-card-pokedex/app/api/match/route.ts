@@ -29,14 +29,19 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error(error);
 
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Error buscando variantes.",
-      },
-      { status: 500 }
-    );
+    const message =
+      error instanceof Error ? error.message : "Error buscando variantes.";
+
+    if (message.toLowerCase().includes("insufficient api credits")) {
+      return NextResponse.json(
+        {
+          error:
+            "No quedan créditos suficientes en la API para buscar variantes. Reduce búsquedas o espera a renovar créditos.",
+        },
+        { status: 402 }
+      );
+    }
+
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
