@@ -2,28 +2,26 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
+/**
+ * Barra de navegación principal.
+ *
+ * Decisión de producto: el email del usuario y el botón "Salir" viven en
+ * /profile, no aquí arriba. La Navbar sólo expone el enlace a "Perfil"
+ * cuando hay sesión, para mantener la cabecera limpia.
+ */
 export function Navbar() {
-  const router = useRouter();
-  const [email, setEmail] = useState<string | null>(null);
+  const [isAuthed, setIsAuthed] = useState<boolean | null>(null);
 
   useEffect(() => {
     const supabase = createClient();
-    supabase.auth.getUser().then(({ data }) => setEmail(data.user?.email ?? null));
+    supabase.auth.getUser().then(({ data }) => setIsAuthed(!!data.user));
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      setEmail(session?.user?.email ?? null);
+      setIsAuthed(!!session?.user);
     });
     return () => sub.subscription.unsubscribe();
   }, []);
-
-  async function logout() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    router.push("/login");
-    router.refresh();
-  }
 
   return (
     <nav className="nav">
@@ -36,20 +34,14 @@ export function Navbar() {
           <Link href="/inventory">Inventario</Link>
           <Link href="/collections">Colecciones</Link>
           <Link href="/dashboard">Dashboard</Link>
-          {email ? (
-            <>
-              <Link href="/profile">Perfil</Link>
-              <span className="small">{email}</span>
-              <button className="button secondary" onClick={logout}>
-                Salir
-              </button>
-            </>
-          ) : (
+          {isAuthed ? (
+            <Link href="/profile">Perfil</Link>
+          ) : isAuthed === false ? (
             <>
               <Link href="/login">Login</Link>
               <Link href="/register">Registro</Link>
             </>
-          )}
+          ) : null}
         </div>
       </div>
     </nav>

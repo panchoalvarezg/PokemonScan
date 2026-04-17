@@ -43,6 +43,14 @@ type CollectionsResponse = {
   };
 };
 
+type MissingRow = {
+  setName: string;
+  owned: number;
+  total: number | null;
+  missing: number | null;
+  percent: number | null;
+};
+
 /**
  * Cliente de la pantalla /collections. Cada colección se renderiza como un
  * <details> colapsable: header con progreso + mosaico de cartas al abrir.
@@ -95,6 +103,34 @@ export function CollectionsClient() {
       }))
       .filter((c) => c.setName.toLowerCase().includes(s) || c.cards.length > 0);
   }, [data, search]);
+
+  /**
+   * Resumen de cuenta: cuántas cartas faltan en cada expansión para
+   * completarla. Se deriva de data.collections (total y uniqueOwned ya vienen
+   * calculados por /api/collections contra la Pokémon TCG API). Los sets cuya
+   * completitud no conocemos (sin total oficial) quedan al final.
+   */
+  const missingRows = useMemo(() => {
+    if (!data) return [] as MissingRow[];
+    return data.collections
+      .map<MissingRow>((c) => {
+        const total = c.total;
+        const owned = c.uniqueOwned;
+        const missing =
+          total !== null && total > 0 ? Math.max(0, total - owned) : null;
+        const percent =
+          total !== null && total > 0
+            ? Math.min(100, Math.round((owned / total) * 100))
+            : null;
+        return { setName: c.setName, owned, total, missing, percent };
+      })
+      .sort((a, b) => {
+        const pa = a.percent ?? 101;
+        const pb = b.percent ?? 101;
+        if (pa !== pb) return pa - pb;
+        return a.setName.localeCompare(b.setName);
+      });
+  }, [data]);
 
   // La pestaña de Intercambios se filtra igual que las demás pero se pinta
   // arriba con estilo destacado.
@@ -205,6 +241,28 @@ export function CollectionsClient() {
               "No hay colecciones que coincidan con tu búsqueda."
             )}
           </p>
+        </div>
+      )}
+
+      {/* Resumen de cuenta: cuántas cartas faltan por expansión para
+          completar cada set. Antes vivía en /profile; lo movimos aquí para
+          quedar junto a la vista de colecciones. */}
+      {data && missingRows.length > 0 && (
+        <div className="card">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <h2 className="font-bold text-lg">Resumen de cuenta</h2>
+              <p className="small">
+                Cuántas cartas te faltan por expansión para completarla. Se
+                calcula con los totales oficiales de la Pokémon TCG API.
+              </p>
+            </div>
+          </div>
+          <div className="grid gap-2 mt-3">
+            {missingRows.map((row) => (
+              <MissingRowCard key={row.setName} row={row} />
+            ))}
+          </div>
         </div>
       )}
 
@@ -397,6 +455,46 @@ function KPI({ label, value }: { label: string; value: string }) {
     <div className="rounded-lg border border-gray-200 p-3">
       <p className="text-xs text-gray-500">{label}</p>
       <p className="font-bold text-lg">{value}</p>
+    </div>
+  );
+}
+
+/**
+ * Fila del "Resumen de cuenta": muestra set, poseídas/total, faltantes y %
+ * de completitud con barra de progreso. Si no conocemos el total oficial,
+ * lo indicamos en gris para que el usuario sepa por qué no hay %.
+ */
+function MissingRowCard({ row }: { row: MissingRow }) {
+  const known = row.total !== null && row.percent !== null;
+  const pct = row.percent ?? 0;
+  return (
+    <div className="rounded-lg border border-gray-200 p-3">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div style={{ minWidth: 0 }}>
+          <p className="font-semibold truncate" title={row.setName}>
+            {row.setName}
+          </p>
+          <p className="small">
+            {row.owned}
+            {known ? ` / ${row.total}` : " / ?"} cartas únicas
+            {known && row.missing !== null
+              ? ` · faltan ${row.missing}`
+              : " · total oficial desconocido"}
+          </p>
+        </div>
+        <div className="text-right" style={{ minWidth: 80 }}>
+          <p className="font-bold text-lg">{known ? `${pct}%` : "—"}</p>
+          <p className="text-xs text-gray-500">Completitud</p>
+        </div>
+      </div>
+      <div className="w-full bg-gray-100 rounded h-2 mt-2">
+        <div
+          className={
+            known ? "bg-green-500 h-2 rounded" : "bg-gray-300 h-2 rounded"
+          }
+          style={{ width: `${known ? pct : 100}%` }}
+        />
+      </div>
     </div>
   );
 }

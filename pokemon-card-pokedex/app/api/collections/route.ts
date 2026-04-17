@@ -72,17 +72,61 @@ export async function GET(request: NextRequest) {
     }
 
     const admin = createAdminClient();
-    const { data, error } = await admin
+
+    // SELECT completo. Si la vista está en una versión antigua y le faltan
+    // columnas (típicamente card_type/rarity porque no se corrió la migración
+    // 004/005), Postgres devuelve 42703. En ese caso reintentamos con las
+    // columnas seguras que existen desde 001 y rellenamos los huecos con null.
+    const FULL_COLUMNS =
+      "id, product_name, set_name, card_number, card_type, rarity, condition, image_url, quantity, estimated_unit_value, estimated_total_value, for_trade, created_at";
+    const SAFE_COLUMNS =
+      "id, product_name, set_name, card_number, image_url, quantity, estimated_unit_value, estimated_total_value, for_trade, created_at";
+
+    let rows: Row[] = [];
+    const first = await admin
       .from("user_cards_detailed")
-      .select(
-        "id, product_name, set_name, card_number, card_type, rarity, condition, image_url, quantity, estimated_unit_value, estimated_total_value, for_trade, created_at"
-      )
+      .select(FULL_COLUMNS)
       .eq("user_id", user.id)
       .order("created_at", { ascending: false });
 
-    if (error) throw error;
+    if (first.error) {
+      const msg = String(first.error.message || "");
+      const isMissingColumn =
+        first.error.code === "42703" || /does not exist/i.test(msg);
+      if (!isMissingColumn) throw first.error;
 
-    const rows = (data ?? []) as Row[];
+      console.warn(
+        "Collections: vista user_cards_detailed desactualizada (falta card_type/rarity). " +
+          "Ejecuta supabase/migrations/007_ensure_detailed_view.sql en el SQL Editor para arreglarlo. " +
+          "Mientras tanto respondo con card_type/rarity/condition en null."
+      );
+      const fallback = await admin
+        .from("user_cards_detailed")
+        .select(SAFE_COLUMNS)
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+      if (fallback.error) throw fallback.error;
+      rows = ((fallback.data ?? []) as Array<Record<string, unknown>>).map(
+        (r) => ({
+          id: String(r.id),
+          product_name: String(r.product_name ?? ""),
+          set_name: (r.set_name as string | null) ?? null,
+          card_number: (r.card_number as string | null) ?? null,
+          card_type: null,
+          rarity: null,
+          condition: null,
+          image_url: (r.image_url as string | null) ?? null,
+          quantity: (r.quantity as number | string) ?? 0,
+          estimated_unit_value: (r.estimated_unit_value as number | string) ?? 0,
+          estimated_total_value:
+            (r.estimated_total_value as number | string) ?? 0,
+          for_trade: (r.for_trade as boolean | null) ?? null,
+          created_at: String(r.created_at ?? ""),
+        })
+      );
+    } else {
+      rows = (first.data ?? []) as Row[];
+    }
 
     // Cargar totales oficiales del TCG para calcular completitud. Si la API
     // falla seguimos con total=null — no rompemos la vista.
