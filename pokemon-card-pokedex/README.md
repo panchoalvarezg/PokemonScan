@@ -82,6 +82,51 @@ carta.
 2. Agrega las variables de entorno en **Project → Settings → Environment Variables**.
 3. Vercel detecta `vercel.json` y crea el **Cron Job** que refresca precios a diario (06:00 UTC).
 
+## Despliegue dockerizado (Docker Compose)
+
+El repo incluye una stack completa en `docker-compose.yml` que cumple el
+requisito de "al menos Base de Datos dockerizada" y, opcionalmente, corre
+también la app Next.js en contenedor.
+
+### Sólo base de datos (recomendado para `npm run dev` local)
+
+```bash
+docker compose up -d        # levanta db (5433) + pgAdmin (5050)
+docker compose logs -f db   # verifica que las migraciones se aplicaron
+docker compose down         # para; añade -v para borrar el volumen
+```
+
+- Postgres queda expuesto en `localhost:5433`, usuario `pokescan`, password
+  `pokescan_dev`, base `pokemoncardpokedex`.
+- Las migraciones de `supabase/migrations/*.sql` se aplican automáticamente
+  en el primer arranque (se montan como volumen de sólo lectura y las ejecuta
+  `docker/db/init/100_run_migrations.sh`).
+- Antes de las migraciones se aplica `docker/db/init/000_auth_stub.sql`, que
+  crea un esquema `auth` mínimo para que las policies y FKs de Supabase
+  (ej. `auth.users`, `auth.uid()`) resuelvan sobre Postgres plano.
+- pgAdmin en <http://localhost:5050> (server mode off; conecta con host `db`,
+  puerto `5432`, usuario `pokescan`, password `pokescan_dev`).
+
+### Stack completa (BD + app Next.js)
+
+```bash
+docker compose --profile fullstack up --build
+```
+
+Construye la imagen multi-stage definida en `Dockerfile` (aprovecha
+`output: "standalone"` de Next 15 para que la imagen final pese poco) y
+expone la app en `http://localhost:3000`. Carga `.env.local` vía `env_file`,
+así que no hace falta duplicar variables.
+
+### Resetear datos
+
+```bash
+docker compose down -v && docker compose up -d
+```
+
+El volumen `pokescan_pgdata` se borra y Postgres vuelve a correr todas las
+migraciones desde cero.
+
 ## Endpoints de la API
 
 | Ruta | Método | Descripción |

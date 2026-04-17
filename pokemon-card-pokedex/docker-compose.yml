@@ -1,0 +1,82 @@
+# Stack dockerizado para desarrollo local.
+#
+# Por defecto (`docker compose up`) arranca únicamente la base de datos y
+# pgAdmin — suficiente para cumplir el requisito de "al menos BD en Docker"
+# y para que puedas correr `npm run dev` contra Postgres local sin depender
+# de la instancia hosteada en Supabase.
+#
+# Si además quieres correr la app Next.js en contenedor, usa el perfil
+# `fullstack`:
+#
+#     docker compose --profile fullstack up --build
+#
+# Notas:
+# * El volumen `pokescan_pgdata` persiste los datos entre `up`/`down`.
+#   Si quieres empezar de cero (reaplicar migraciones), `docker compose down -v`.
+# * El contenedor de postgres ejecuta automáticamente, en su primer arranque,
+#   ./docker/db/init/000_auth_stub.sql seguido de las migraciones montadas
+#   desde ./supabase/migrations gracias a /100_run_migrations.sh.
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: pokescan-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pokescan
+      POSTGRES_PASSWORD: pokescan_dev
+      POSTGRES_DB: pokemoncardpokedex
+    ports:
+      # Exponemos 5433 en el host para no chocar con un Postgres local en 5432.
+      - "5433:5432"
+    volumes:
+      - pokescan_pgdata:/var/lib/postgresql/data
+      - ./docker/db/init:/docker-entrypoint-initdb.d:ro
+      - ./supabase/migrations:/migrations:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pokescan -d pokemoncardpokedex"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  pgadmin:
+    image: dpage/pgadmin4:8
+    container_name: pokescan-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@pokescan.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+      # Modo desktop: no pide login y recuerda el server.
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "5050:80"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pokescan-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    # Cargamos el .env.local tal cual para no duplicar variables. Si falta,
+    # `docker compose` dará un warning; crea el archivo desde .env.example.
+    env_file:
+      - .env.local
+    environment:
+      # URL directa a la BD local para scripts de seed/backup dentro del contenedor.
+      DATABASE_URL: postgres://pokescan:pokescan_dev@db:5432/pokemoncardpokedex
+      NODE_ENV: production
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles:
+      - fullstack
+
+volumes:
+  pokescan_pgdata:
+    driver: local

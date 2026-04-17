@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // `standalone` genera un build auto-contenido en `.next/standalone` que se
+  // copia tal cual al contenedor Docker; sin esto la imagen pesa varios GB.
+  output: "standalone",
   images: {
     remotePatterns: [{ protocol: "https", hostname: "**" }],
   },

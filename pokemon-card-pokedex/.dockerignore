@@ -1,0 +1,30 @@
+# Mantén la imagen ligera: ignora lo que no necesita el build.
+node_modules
+.next
+.git
+.gitignore
+.DS_Store
+
+# Secretos y entornos locales (se inyectan en runtime via docker-compose env_file).
+.env
+.env.local
+.env.development.local
+.env.production.local
+
+# Artefactos y logs
+*.log
+npm-debug.log*
+tsconfig.tsbuildinfo
+
+# Docker meta-archivos: no tienen que entrar al contexto de build de la app.
+Dockerfile
+.dockerignore
+docker-compose.yml
+docker
+
+# IDE
+.vscode
+.idea
+
+# Cosas de la plataforma de despliegue
+.vercel
