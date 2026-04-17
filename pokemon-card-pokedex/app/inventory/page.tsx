@@ -1,67 +1,65 @@
 import { createClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
 
-type SearchParams = Promise<{ userId?: string }>;
+export default async function InventoryPage() {
+  const supabase = await createClient();
 
-export default async function InventoryPage(props: { searchParams: SearchParams }) {
-  const searchParams = await props.searchParams;
-  const userId = searchParams.userId || "";
+  // 🔐 Obtener usuario autenticado
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  let rows: any[] = [];
-  let totalValue = 0;
-
-  if (userId) {
-    const supabase = await createClient();
-
-    const { data, error } = await supabase
-      .from("user_cards")
-      .select(`
-        id,
-        quantity,
-        condition,
-        estimated_unit_value,
-        estimated_total_value,
-        created_at,
-        card_catalog:card_catalog_id (
-          product_name,
-          set_name,
-          card_number,
-          rarity,
-          card_type,
-          variant
-        )
-      `)
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      console.error("Error cargando inventario:", error);
-    }
-
-    rows = data || [];
-    totalValue = rows.reduce(
-      (acc, row) => acc + Number(row.estimated_total_value || 0),
-      0
-    );
+  if (!user) {
+    return redirect("/login");
   }
+
+  const userId = user.id;
+
+  const { data, error } = await supabase
+    .from("user_cards")
+    .select(`
+      id,
+      quantity,
+      condition,
+      estimated_unit_value,
+      estimated_total_value,
+      created_at,
+      card_catalog:card_catalog_id (
+        product_name,
+        set_name,
+        card_number,
+        rarity,
+        card_type,
+        variant
+      )
+    `)
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("Error cargando inventario:", error);
+  }
+
+  const rows = data || [];
+
+  const totalValue = rows.reduce(
+    (acc, row) => acc + Number(row.estimated_total_value || 0),
+    0
+  );
 
   return (
     <main className="mx-auto max-w-7xl p-6">
       <h1 className="mb-2 text-3xl font-bold">Inventario</h1>
-      <p className="mb-6 text-sm text-gray-600">
-        Usa <code>?userId=TU_UUID</code> en la URL para ver el inventario del usuario.
-      </p>
 
       <div className="mb-6 rounded-xl border p-4">
         <p className="text-sm text-gray-600">Valor total estimado</p>
         <p className="text-3xl font-bold">${totalValue.toFixed(2)}</p>
       </div>
 
-      {!userId ? (
+      {rows.length === 0 ? (
         <p className="text-sm text-gray-600">
-          Agrega el userId a la URL. Ejemplo: <code>/inventory?userId=...</code>
+          No hay cartas guardadas en tu inventario.
         </p>
-      ) : rows.length === 0 ? (
-        <p className="text-sm text-gray-600">No hay cartas guardadas para este usuario.</p>
       ) : (
         <div className="overflow-x-auto rounded-xl border">
           <table className="min-w-full border-collapse text-sm">
@@ -100,8 +98,12 @@ export default async function InventoryPage(props: { searchParams: SearchParams 
                   <td className="border-b px-4 py-3">
                     {row.card_catalog?.variant || "-"}
                   </td>
-                  <td className="border-b px-4 py-3">{row.condition}</td>
-                  <td className="border-b px-4 py-3">{row.quantity}</td>
+                  <td className="border-b px-4 py-3">
+                    {row.condition}
+                  </td>
+                  <td className="border-b px-4 py-3">
+                    {row.quantity}
+                  </td>
                   <td className="border-b px-4 py-3">
                     ${Number(row.estimated_unit_value || 0).toFixed(2)}
                   </td>
