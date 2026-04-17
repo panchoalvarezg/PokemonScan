@@ -23,19 +23,16 @@ function safeString(value: unknown) {
   return typeof value === "string" ? value : "";
 }
 
-function buildSearchTerms(params: SearchCardVariantsParams) {
-  const queries: string[] = [];
-
+function buildSingleSearchTerm(params: SearchCardVariantsParams) {
   const q1 = [params.detectedName, params.detectedNumber].filter(Boolean).join(" ").trim();
+  if (q1) return q1;
+
   const q2 = [params.detectedName, params.detectedSet].filter(Boolean).join(" ").trim();
-  const q3 = params.detectedName.trim();
-  const q4 = params.extractedText.trim().split(" ").slice(0, 6).join(" ");
+  if (q2) return q2;
 
-  for (const q of [q1, q2, q3, q4]) {
-    if (q && !queries.includes(q)) queries.push(q);
-  }
+  if (params.detectedName.trim()) return params.detectedName.trim();
 
-  return queries;
+  return params.extractedText.trim().split(" ").slice(0, 4).join(" ");
 }
 
 function detectVariantLabel(card: ApiCard) {
@@ -80,7 +77,13 @@ function scoreVariant(card: ApiCard, params: SearchCardVariantsParams) {
   let score = 0;
 
   if (params.detectedName && name.includes(params.detectedName.toLowerCase())) score += 60;
-  if (params.detectedNumber && (number.includes(params.detectedNumber.toLowerCase()) || name.includes(params.detectedNumber.toLowerCase()))) score += 35;
+  if (
+    params.detectedNumber &&
+    (number.includes(params.detectedNumber.toLowerCase()) ||
+      name.includes(params.detectedNumber.toLowerCase()))
+  ) {
+    score += 35;
+  }
   if (params.detectedSet && set.includes(params.detectedSet.toLowerCase())) score += 20;
 
   for (const hint of params.detectedVariantHints) {
@@ -92,10 +95,21 @@ function scoreVariant(card: ApiCard, params: SearchCardVariantsParams) {
   return score;
 }
 
-async function fetchCards(search: string, apiKey: string): Promise<ApiCard[]> {
+export async function searchCardVariants(
+  params: SearchCardVariantsParams
+): Promise<VariantResult[]> {
+  const apiKey = process.env.POKEMON_PRICE_TRACKER_API_KEY;
+
+  if (!apiKey) {
+    throw new Error("Falta POKEMON_PRICE_TRACKER_API_KEY");
+  }
+
+  const search = buildSingleSearchTerm(params);
+  if (!search) return [];
+
   const url = new URL(`${API_BASE_URL}/cards`);
   url.searchParams.set("search", search);
-  url.searchParams.set("limit", "12");
+  url.searchParams.set("limit", "8");
 
   const response = await fetch(url.toString(), {
     method: "GET",
@@ -112,41 +126,15 @@ async function fetchCards(search: string, apiKey: string): Promise<ApiCard[]> {
     throw new Error(data?.message || data?.error || "La API devolvió un error.");
   }
 
-  if (Array.isArray(data?.cards)) return data.cards;
-  if (Array.isArray(data?.results)) return data.results;
-  if (Array.isArray(data)) return data;
+  const cards: ApiCard[] = Array.isArray(data?.cards)
+    ? data.cards
+    : Array.isArray(data?.results)
+      ? data.results
+      : Array.isArray(data)
+        ? data
+        : [];
 
-  return [];
-}
-
-export async function searchCardVariants(
-  params: SearchCardVariantsParams
-): Promise<VariantResult[]> {
-  const apiKey = process.env.POKEMON_PRICE_TRACKER_API_KEY;
-
-  if (!apiKey) {
-    throw new Error("Falta POKEMON_PRICE_TRACKER_API_KEY");
-  }
-
-  const queries = buildSearchTerms(params);
-  if (queries.length === 0) return [];
-
-  const allCards: ApiCard[] = [];
-  const seen = new Set<string>();
-
-  for (const q of queries) {
-    const cards = await fetchCards(q, apiKey);
-
-    for (const card of cards) {
-      const id = safeString(card.id || card.cardId || card.slug || JSON.stringify(card));
-      if (!seen.has(id)) {
-        seen.add(id);
-        allCards.push(card);
-      }
-    }
-  }
-
-  return allCards
+  return cards
     .map((card) => {
       const name = safeString(card.name || card.cardName || card.title || "Carta sin nombre");
       const set = safeString(card.set || card.setName || card.expansion);
