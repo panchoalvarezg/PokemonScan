@@ -74,16 +74,16 @@ function extractRarity(card: ApiCard) {
   return (
     safeString(card.rarity) ||
     safeString(card.rarityName) ||
-    safeString(card.cardRarity) ||
-    "Unknown"
+    safeString(card.prices?.rarity) ||
+    ""
   );
 }
 
 function extractCardType(card: ApiCard) {
+  if (typeof card.cardType === "string") return card.cardType;
   if (typeof card.type === "string") return card.type;
   if (Array.isArray(card.types) && typeof card.types[0] === "string") return card.types[0];
-  if (Array.isArray(card.types) && typeof card.types[0]?.name === "string") return card.types[0].name;
-  return safeString(card.cardType) || safeString(card.primaryType) || "Unknown";
+  return "";
 }
 
 function scoreVariant(card: ApiCard, params: SearchCardVariantsParams) {
@@ -94,18 +94,29 @@ function scoreVariant(card: ApiCard, params: SearchCardVariantsParams) {
 
   let score = 0;
 
-  if (params.detectedName && name.includes(params.detectedName.toLowerCase())) score += 60;
+  if (params.detectedName && name.includes(params.detectedName.toLowerCase())) {
+    score += 60;
+  }
+
   if (
     params.detectedNumber &&
-    (number.includes(params.detectedNumber.toLowerCase()) ||
-      name.includes(params.detectedNumber.toLowerCase()))
+    (
+      number.includes(params.detectedNumber.toLowerCase()) ||
+      name.includes(params.detectedNumber.toLowerCase())
+    )
   ) {
     score += 35;
   }
-  if (params.detectedSet && set.includes(params.detectedSet.toLowerCase())) score += 20;
+
+  if (params.detectedSet && set.includes(params.detectedSet.toLowerCase())) {
+    score += 20;
+  }
 
   for (const hint of params.detectedVariantHints) {
-    if (variant.includes(hint.toLowerCase()) || name.includes(hint.toLowerCase())) {
+    if (
+      variant.includes(hint.toLowerCase()) ||
+      name.includes(hint.toLowerCase())
+    ) {
       score += 10;
     }
   }
@@ -152,37 +163,28 @@ export async function searchCardVariants(
         ? data
         : [];
 
-return allCards
-  .map((card) => {
-    const name = safeString(card.name || card.cardName || card.title || "Carta sin nombre");
-    const set = safeString(card.set || card.setName || card.expansion);
-    const variant = detectVariantLabel(card);
-    const externalId = safeString(card.id || card.cardId || card.slug || name);
-    const price = extractPrice(card);
-    const confidence = scoreVariant(card, params);
+  return cards
+    .map((card) => {
+      const name = safeString(card.name || card.cardName || card.title || "Carta sin nombre");
+      const set = safeString(card.set || card.setName || card.expansion);
+      const variant = detectVariantLabel(card);
+      const rarity = extractRarity(card);
+      const cardType = extractCardType(card);
+      const externalId = safeString(card.id || card.cardId || card.slug || name);
+      const price = extractPrice(card);
+      const confidence = scoreVariant(card, params);
 
-    const rarity =
-      safeString(card.rarity) ||
-      safeString(card.rarityName) ||
-      safeString(card.prices?.rarity) ||
-      "";
-
-    const cardType =
-      safeString(card.cardType) ||
-      safeString(card.type) ||
-      safeString(card.types?.[0]) ||
-      "";
-
-    return {
-      externalId,
-      name,
-      set,
-      variant,
-      rarity,
-      cardType,
-      price,
-      confidence,
-    };
-  })
-  .sort((a, b) => b.confidence - a.confidence)
-  .slice(0, 5);
+      return {
+        externalId,
+        name,
+        set,
+        variant,
+        rarity,
+        cardType,
+        price,
+        confidence,
+      };
+    })
+    .sort((a, b) => b.confidence - a.confidence)
+    .slice(0, 5);
+}
