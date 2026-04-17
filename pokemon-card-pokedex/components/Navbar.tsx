@@ -38,6 +38,7 @@ export function Navbar() {
           <Link href="/dashboard">Dashboard</Link>
           {email ? (
             <>
+              <Link href="/profile">Perfil</Link>
               <span className="small">{email}</span>
               <button className="button secondary" onClick={logout}>
                 Salir

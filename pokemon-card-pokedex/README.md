@@ -47,6 +47,7 @@ npm run dev
    - `supabase/migrations/003_indexes.sql`
    - `supabase/migrations/004_card_enrichment.sql`
    - `supabase/migrations/005_rarity_stats.sql`
+   - `supabase/migrations/006_profile_trade.sql`
 3. Authentication → **Providers** → habilita **Email** (con o sin confirmación).
 4. Authentication → **URL Configuration**:
    - **Site URL**: `http://localhost:3000` para desarrollo, o tu URL de Vercel en producción.
@@ -139,6 +140,9 @@ migraciones desde cero.
 | `/api/valuation` | GET | Devuelve el resumen (entradas, totales, promedio). |
 | `/api/stats` | GET | Estadísticas del inventario: totales, tipo/rareza/condición/set predominante, top 5. |
 | `/api/collections` | GET | Inventario agrupado por expansión con completitud y valor por set. |
+| `/api/profile` | GET | Perfil + resumen (intercambios, cartas faltantes por set). |
+| `/api/profile` | PATCH | Actualiza los datos del perfil del usuario autenticado. |
+| `/api/inventory/bulk` | PATCH | Marca/desmarca `for_trade` para varias cartas a la vez. |
 | `/api/prices/refresh` | GET/POST | Refresca precios contra la API y crea snapshots. |
 
 ## Estructura principal
