@@ -23,6 +23,9 @@
     },
     "app/api/scan/route.ts": {
       "maxDuration": 30
+    },
+    "app/api/market-movers/route.ts": {
+      "maxDuration": 30
     }
   }
 }

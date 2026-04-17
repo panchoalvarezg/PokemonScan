@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { MarketMovers } from "@/components/MarketMovers";
 
 export default function Home() {
   return (
@@ -26,6 +27,8 @@ export default function Home() {
             </Link>
           </div>
         </section>
+
+        <MarketMovers />
 
         <section className="grid grid-3">
           <div className="card">
