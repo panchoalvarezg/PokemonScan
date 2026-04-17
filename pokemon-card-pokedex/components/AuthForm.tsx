@@ -13,6 +13,14 @@ export function AuthForm({ mode }: { mode: Mode }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState(false);
+
+  // Estado del flujo OTP (código de un solo uso enviado al email).
+  // `otpSent === true` cambia el formulario al paso 2 (introducir código).
+  const [otpEmail, setOtpEmail] = useState("");
+  const [otpCode, setOtpCode] = useState("");
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpLoading, setOtpLoading] = useState(false);
+
   const router = useRouter();
 
   // Si el callback de OAuth falló, muestra el mensaje en la propia página.
@@ -64,6 +72,84 @@ export function AuthForm({ mode }: { mode: Mode }) {
     setMessage(mode === "login" ? "Sesión iniciada." : "Cuenta creada.");
     router.push("/dashboard");
     router.refresh();
+  }
+
+  /**
+   * Paso 1 del flujo OTP: pide a Supabase que envíe un código de 6 dígitos
+   * (o magic link, según la plantilla del proyecto) al email indicado.
+   *
+   * - En modo `login` NO creamos usuarios nuevos: si el email no existe, el
+   *   backend devolverá error. Así evitamos que alguien se registre "sin
+   *   querer" desde la pantalla de login.
+   * - En modo `register` sí permitimos crear la cuenta al vuelo.
+   */
+  async function sendOtp(event: React.FormEvent) {
+    event.preventDefault();
+    setOtpLoading(true);
+    setError("");
+    setMessage("");
+
+    const supabase = createClient();
+    const { error: otpError } = await supabase.auth.signInWithOtp({
+      email: otpEmail,
+      options: {
+        shouldCreateUser: mode === "register",
+        emailRedirectTo:
+          typeof window !== "undefined"
+            ? `${window.location.origin}/auth/callback`
+            : undefined,
+      },
+    });
+
+    setOtpLoading(false);
+
+    if (otpError) {
+      setError(otpError.message);
+      return;
+    }
+
+    setOtpSent(true);
+    setMessage(
+      "Código enviado. Revisa tu correo (y la carpeta de spam) e introduce los 6 dígitos."
+    );
+  }
+
+  /**
+   * Paso 2 del flujo OTP: el usuario escribe el código de 6 dígitos. Lo
+   * intercambiamos por sesión llamando a `verifyOtp`. Supabase devuelve la
+   * sesión en la respuesta y @supabase/ssr se encarga de persistirla en
+   * cookies para que el servidor (RLS incluido) la vea inmediatamente.
+   */
+  async function verifyOtp(event: React.FormEvent) {
+    event.preventDefault();
+    setOtpLoading(true);
+    setError("");
+    setMessage("");
+
+    const supabase = createClient();
+    const { error: verifyError } = await supabase.auth.verifyOtp({
+      email: otpEmail,
+      token: otpCode.trim(),
+      type: "email",
+    });
+
+    setOtpLoading(false);
+
+    if (verifyError) {
+      setError(verifyError.message);
+      return;
+    }
+
+    setMessage("Sesión iniciada con código.");
+    router.push("/dashboard");
+    router.refresh();
+  }
+
+  function resetOtp() {
+    setOtpSent(false);
+    setOtpCode("");
+    setError("");
+    setMessage("");
   }
 
   async function signInWithGoogle() {
@@ -142,7 +228,108 @@ export function AuthForm({ mode }: { mode: Mode }) {
           fontSize: "0.85rem",
         }}
       >
-        — o con email —
+        — o con código por email (sin contraseña) —
+      </div>
+
+      <form
+        className="form card"
+        onSubmit={otpSent ? verifyOtp : sendOtp}
+      >
+        {!otpSent ? (
+          <>
+            <div className="field">
+              <label>Email</label>
+              <input
+                type="email"
+                value={otpEmail}
+                onChange={(e) => setOtpEmail(e.target.value)}
+                required
+                autoComplete="email"
+                placeholder="tucorreo@ejemplo.com"
+              />
+            </div>
+            <button
+              type="submit"
+              className="button"
+              disabled={otpLoading || !otpEmail}
+              style={{
+                background: "#f4e14a",
+                color: "#1f2937",
+                fontWeight: 700,
+              }}
+            >
+              {otpLoading ? "Enviando código…" : "Enviarme un código"}
+            </button>
+            <div className="small" style={{ color: "var(--muted)" }}>
+              Te llegará un código de 6 dígitos de un solo uso que caduca en
+              pocos minutos. No necesitas contraseña.
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="small" style={{ color: "var(--muted)" }}>
+              Código enviado a <strong>{otpEmail}</strong>. Introdúcelo abajo
+              para entrar.
+            </div>
+            <div className="field">
+              <label>Código de 6 dígitos</label>
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={6}
+                value={otpCode}
+                onChange={(e) =>
+                  setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))
+                }
+                required
+                autoComplete="one-time-code"
+                placeholder="••••••"
+                style={{
+                  letterSpacing: "0.4em",
+                  textAlign: "center",
+                  fontSize: "1.25rem",
+                  fontWeight: 700,
+                }}
+              />
+            </div>
+            <button
+              type="submit"
+              className="button"
+              disabled={otpLoading || otpCode.length < 6}
+              style={{
+                background: "#f4e14a",
+                color: "#1f2937",
+                fontWeight: 700,
+              }}
+            >
+              {otpLoading ? "Verificando…" : "Entrar con código"}
+            </button>
+            <button
+              type="button"
+              className="button"
+              onClick={resetOtp}
+              disabled={otpLoading}
+              style={{
+                background: "transparent",
+                color: "var(--muted)",
+                border: "1px dashed var(--border)",
+              }}
+            >
+              Cambiar correo o reenviar
+            </button>
+          </>
+        )}
+      </form>
+
+      <div
+        style={{
+          textAlign: "center",
+          color: "var(--muted)",
+          fontSize: "0.85rem",
+        }}
+      >
+        — o con email y contraseña —
       </div>
 
       <form className="form card" onSubmit={handleSubmit}>

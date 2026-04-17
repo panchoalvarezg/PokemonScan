@@ -10,8 +10,8 @@ export default function LoginPage() {
         <div>
           <h1>Iniciar sesión</h1>
           <p className="small">
-            Entra con tu cuenta de Google o con tu email para ver tu inventario
-            de cartas Pokémon.
+            Entra con Google (SSO), con un código de un solo uso (OTP) enviado
+            a tu email, o con tu email y contraseña clásicos.
           </p>
         </div>
         <AuthForm mode="login" />

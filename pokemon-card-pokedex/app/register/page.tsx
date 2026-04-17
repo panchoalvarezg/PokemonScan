@@ -10,8 +10,9 @@ export default function RegisterPage() {
         <div>
           <h1>Crear cuenta</h1>
           <p className="small">
-            Regístrate con Google o con email y contraseña. Cada usuario tiene
-            su propio inventario gracias a Supabase.
+            Regístrate con Google (SSO), con un código de un solo uso (OTP)
+            que te enviamos al email, o con email y contraseña. Cada usuario
+            tiene su propio inventario gracias a Supabase.
           </p>
         </div>
         <AuthForm mode="register" />
