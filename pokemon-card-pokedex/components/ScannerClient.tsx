@@ -15,6 +15,7 @@ type Variant = {
   cardNumber: string;
   price: number | null;
   confidence: number;
+  source?: string;
 };
 
 type ScanParsed = {
@@ -35,13 +36,19 @@ export default function ScannerClient() {
   const [status, setStatus] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [preview, setPreview] = useState<string>("");
-  const [scan, setScan] = useState<ScanParsed | null>(null);
   const [variants, setVariants] = useState<Variant[]>([]);
   const [selected, setSelected] = useState<Variant | null>(null);
   const [saving, setSaving] = useState(false);
   const [condition, setCondition] = useState("near_mint");
   const [quantity, setQuantity] = useState(1);
   const [userEmail, setUserEmail] = useState<string | null>(null);
+
+  // Campos editables por el usuario (siempre visibles)
+  const [manualName, setManualName] = useState("");
+  const [manualNumber, setManualNumber] = useState("");
+  const [manualSet, setManualSet] = useState("");
+  const [manualType, setManualType] = useState("");
+  const [extractedText, setExtractedText] = useState("");
 
   useEffect(() => {
     const supabase = createClient();
@@ -54,7 +61,7 @@ export default function ScannerClient() {
     setError("");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" } },
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 } },
         audio: false,
       });
       if (videoRef.current) {
@@ -69,39 +76,170 @@ export default function ScannerClient() {
     }
   }
 
+  // --- Preprocesado de imagen para OCR ---------------------------------
+
+  function loadImage(src: string): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = src;
+    });
+  }
+
+  /**
+   * Recorta la franja superior de la carta (donde está el nombre + HP) y
+   * le aplica un umbral de contraste para que Tesseract lea mejor.
+   */
+  async function extractNameStrip(dataUrl: string): Promise<string> {
+    const img = await loadImage(dataUrl);
+    const stripH = Math.floor(img.height * 0.14);
+    const stripY = Math.floor(img.height * 0.04);
+    const canvas = document.createElement("canvas");
+    canvas.width = img.width;
+    canvas.height = stripH;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return dataUrl;
+    ctx.drawImage(img, 0, -stripY);
+
+    // Aumenta contraste y convierte a gris
+    const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    for (let i = 0; i < data.data.length; i += 4) {
+      const avg =
+        (data.data[i] + data.data[i + 1] + data.data[i + 2]) / 3;
+      const v = avg > 150 ? 255 : avg < 80 ? 0 : avg;
+      data.data[i] = v;
+      data.data[i + 1] = v;
+      data.data[i + 2] = v;
+    }
+    ctx.putImageData(data, 0, 0);
+    return canvas.toDataURL("image/png");
+  }
+
+  /**
+   * Recorta la zona inferior donde suele estar el número de carta (ej 125/198)
+   */
+  async function extractBottomStrip(dataUrl: string): Promise<string> {
+    const img = await loadImage(dataUrl);
+    const stripH = Math.floor(img.height * 0.1);
+    const stripY = img.height - stripH;
+    const canvas = document.createElement("canvas");
+    canvas.width = img.width;
+    canvas.height = stripH;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return dataUrl;
+    ctx.drawImage(img, 0, -stripY);
+    return canvas.toDataURL("image/png");
+  }
+
+  async function runOCR(dataUrl: string): Promise<string> {
+    // 1) OCR en la franja del nombre (recortada + alto contraste)
+    let text = "";
+    try {
+      const nameStrip = await extractNameStrip(dataUrl);
+      const res = await Tesseract.recognize(nameStrip, "eng", {
+        // Menos ruido: sólo texto en bloque
+      });
+      text += "\n" + (res.data.text ?? "");
+    } catch (err) {
+      console.warn("OCR strip falló", err);
+    }
+
+    // 2) OCR en la franja inferior (para el número /set)
+    try {
+      const bottomStrip = await extractBottomStrip(dataUrl);
+      const res = await Tesseract.recognize(bottomStrip, "eng");
+      text += "\n" + (res.data.text ?? "");
+    } catch (err) {
+      console.warn("OCR bottom falló", err);
+    }
+
+    // 3) OCR completo como respaldo
+    try {
+      const res = await Tesseract.recognize(dataUrl, "eng");
+      text += "\n" + (res.data.text ?? "");
+    } catch (err) {
+      console.warn("OCR full falló", err);
+    }
+
+    return text.trim();
+  }
+
+  // --- Pipeline principal ----------------------------------------------
+
   async function processImage(dataUrl: string) {
     setPreview(dataUrl);
     setVariants([]);
     setSelected(null);
-    setScan(null);
     setError("");
     setStatus("");
 
     try {
-      // 1) OCR en el navegador con Tesseract.js
-      setLoadingStep("Leyendo texto de la carta (OCR)…");
-      const ocrResult = await Tesseract.recognize(dataUrl, "eng");
-      const text = ocrResult.data.text ?? "";
+      setLoadingStep("Leyendo texto de la carta (OCR optimizado)…");
+      const text = await runOCR(dataUrl);
+      setExtractedText(text);
 
-      // 2) Parse en el servidor (nombre, número, set, tipo)
       setLoadingStep("Detectando nombre, set y tipo…");
       const scanRes = await fetch("/api/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
       });
-      const scanData = await scanRes.json();
+      const scanData = (await scanRes.json()) as ScanParsed;
       if (!scanRes.ok) {
-        throw new Error(scanData?.error || "No se pudo analizar el texto.");
+        throw new Error(
+          (scanData as any)?.error || "No se pudo analizar el texto."
+        );
       }
-      setScan(scanData);
 
-      // 3) Match con Pokemon Price Tracker API
-      setLoadingStep("Buscando la carta en Pokemon Price Tracker…");
+      // Rellena los campos editables con lo detectado (el usuario puede
+      // corregirlos antes de buscar).
+      setManualName(scanData.detectedName);
+      setManualNumber(scanData.detectedNumber);
+      setManualSet(scanData.detectedSet);
+      setManualType(scanData.detectedType);
+
+      await searchVariants({
+        name: scanData.detectedName,
+        number: scanData.detectedNumber,
+        set: scanData.detectedSet,
+        type: scanData.detectedType,
+        extractedText: text,
+        variantHints: scanData.detectedVariantHints,
+      });
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : "Error procesando la carta.");
+    } finally {
+      setLoadingStep("");
+    }
+  }
+
+  async function searchVariants(input: {
+    name: string;
+    number?: string;
+    set?: string;
+    type?: string;
+    extractedText?: string;
+    variantHints?: string[];
+  }) {
+    setLoadingStep("Buscando en Pokémon TCG + Pokemon Price Tracker…");
+    setError("");
+    setStatus("");
+    try {
       const matchRes = await fetch("/api/match", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(scanData),
+        body: JSON.stringify({
+          detectedName: input.name,
+          detectedNumber: input.number ?? "",
+          detectedSet: input.set ?? "",
+          detectedType: input.type ?? "",
+          extractedText: input.extractedText ?? extractedText,
+          detectedVariantHints: input.variantHints ?? [],
+          manualQuery: input.name,
+        }),
       });
       const matchData = await matchRes.json();
       if (!matchRes.ok) {
@@ -111,12 +249,12 @@ export default function ScannerClient() {
       setSelected(matchData.best ?? null);
       setStatus(
         matchData.variants?.length
-          ? "Carta detectada. Revisa las coincidencias."
-          : "No se encontraron coincidencias. Prueba con una foto más nítida."
+          ? `${matchData.variants.length} coincidencia(s) encontrada(s).`
+          : "No hubo resultados. Ajusta el nombre/número/set y pulsa “Buscar” de nuevo."
       );
     } catch (err) {
       console.error(err);
-      setError(err instanceof Error ? err.message : "Error procesando la carta.");
+      setError(err instanceof Error ? err.message : "Error buscando.");
     } finally {
       setLoadingStep("");
     }
@@ -127,12 +265,12 @@ export default function ScannerClient() {
     const canvas = canvasRef.current;
     if (!video || !canvas) return;
 
-    canvas.width = video.videoWidth || 1280;
-    canvas.height = video.videoHeight || 720;
+    canvas.width = video.videoWidth || 1920;
+    canvas.height = video.videoHeight || 1080;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.drawImage(video, 0, 0);
-    const image = canvas.toDataURL("image/jpeg", 0.92);
+    const image = canvas.toDataURL("image/jpeg", 0.95);
     await processImage(image);
   }
 
@@ -144,6 +282,20 @@ export default function ScannerClient() {
       if (typeof reader.result === "string") processImage(reader.result);
     };
     reader.readAsDataURL(file);
+  }
+
+  async function manualSearch(event?: React.FormEvent) {
+    event?.preventDefault();
+    if (!manualName.trim()) {
+      setError("Escribe al menos el nombre de la carta.");
+      return;
+    }
+    await searchVariants({
+      name: manualName.trim(),
+      number: manualNumber.trim(),
+      set: manualSet.trim(),
+      type: manualType.trim(),
+    });
   }
 
   async function saveToInventory() {
@@ -165,7 +317,7 @@ export default function ScannerClient() {
           productName: selected.name,
           setName: selected.set,
           cardNumber: selected.cardNumber,
-          cardType: selected.type || scan?.detectedType || null,
+          cardType: selected.type || manualType || null,
           imageUrl: selected.imageUrl,
           condition,
           quantity,
@@ -246,6 +398,67 @@ export default function ScannerClient() {
         </div>
       </div>
 
+      {/* Formulario manual / editable siempre visible */}
+      <form
+        onSubmit={manualSearch}
+        className="rounded-xl bg-white shadow p-4 border border-gray-200 space-y-3"
+      >
+        <h3 className="font-bold text-lg">
+          Datos de la carta (edita y pulsa “Buscar”)
+        </h3>
+        <p className="text-sm text-gray-500">
+          Si el OCR no detectó bien, puedes escribir el nombre y/o número
+          manualmente. La búsqueda usa la Pokémon TCG API (mejor base de datos
+          oficial) y cae a Pokemon Price Tracker si no encuentra.
+        </p>
+        <div className="grid gap-3 md:grid-cols-4">
+          <label className="block">
+            <span className="text-xs text-gray-500">Nombre *</span>
+            <input
+              value={manualName}
+              onChange={(e) => setManualName(e.target.value)}
+              placeholder="Ej: Charizard ex"
+              className="mt-1 w-full rounded border border-gray-300 p-2"
+              required
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs text-gray-500">Número</span>
+            <input
+              value={manualNumber}
+              onChange={(e) => setManualNumber(e.target.value)}
+              placeholder="Ej: 125/198"
+              className="mt-1 w-full rounded border border-gray-300 p-2"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs text-gray-500">Expansión / Set</span>
+            <input
+              value={manualSet}
+              onChange={(e) => setManualSet(e.target.value)}
+              placeholder="Ej: Obsidian Flames"
+              className="mt-1 w-full rounded border border-gray-300 p-2"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs text-gray-500">Tipo</span>
+            <input
+              value={manualType}
+              onChange={(e) => setManualType(e.target.value)}
+              placeholder="Ej: Fire"
+              className="mt-1 w-full rounded border border-gray-300 p-2"
+            />
+          </label>
+        </div>
+        <button
+          type="submit"
+          disabled={Boolean(loadingStep)}
+          className="rounded-lg bg-blue-600 text-white px-4 py-2 font-bold disabled:opacity-60"
+        >
+          🔎 Buscar
+        </button>
+      </form>
+
       {loadingStep && (
         <div className="rounded-xl bg-blue-50 border border-blue-200 p-4 text-blue-800">
           ⏳ {loadingStep}
@@ -262,27 +475,9 @@ export default function ScannerClient() {
         </div>
       )}
 
-      {scan && (
-        <div className="rounded-xl bg-white shadow p-4 border border-gray-200">
-          <h3 className="font-bold text-lg mb-2">Datos detectados</h3>
-          <dl className="grid grid-cols-2 gap-y-1 text-sm">
-            <dt className="text-gray-500">Nombre</dt>
-            <dd className="font-semibold">{scan.detectedName || "—"}</dd>
-            <dt className="text-gray-500">Número</dt>
-            <dd>{scan.detectedNumber || "—"}</dd>
-            <dt className="text-gray-500">Expansión</dt>
-            <dd>{scan.detectedSet || "—"}</dd>
-            <dt className="text-gray-500">Tipo</dt>
-            <dd>{scan.detectedType || "—"}</dd>
-          </dl>
-        </div>
-      )}
-
       {variants.length > 0 && (
         <div className="rounded-xl bg-white shadow p-4 border border-gray-200">
-          <h3 className="font-bold text-lg mb-3">
-            Coincidencias en Pokemon Price Tracker
-          </h3>
+          <h3 className="font-bold text-lg mb-3">Coincidencias encontradas</h3>
           <div className="grid gap-3 md:grid-cols-2">
             {variants.map((v) => {
               const isActive = selected?.externalId === v.externalId;
@@ -301,7 +496,7 @@ export default function ScannerClient() {
                       <img
                         src={v.imageUrl}
                         alt={v.name}
-                        className="w-16 h-22 object-contain rounded"
+                        className="w-20 h-28 object-contain rounded"
                       />
                     )}
                     <div className="flex-1">
@@ -311,13 +506,15 @@ export default function ScannerClient() {
                         {v.cardNumber ? ` · ${v.cardNumber}` : ""}
                       </p>
                       {v.type && (
-                        <p className="text-xs text-blue-700 mt-1">Tipo: {v.type}</p>
+                        <p className="text-xs text-blue-700 mt-1">
+                          Tipo: {v.type}
+                        </p>
                       )}
                       <p className="text-green-600 font-bold mt-1">
                         {v.price != null ? currency(v.price) : "Sin precio"}
                       </p>
                       <p className="text-[10px] text-gray-400">
-                        Confianza: {v.confidence}
+                        Fuente: {v.source ?? "—"} · Confianza: {v.confidence}
                       </p>
                     </div>
                   </div>
@@ -353,7 +550,9 @@ export default function ScannerClient() {
                 type="number"
                 min={1}
                 value={quantity}
-                onChange={(e) => setQuantity(Math.max(1, Number(e.target.value)))}
+                onChange={(e) =>
+                  setQuantity(Math.max(1, Number(e.target.value)))
+                }
                 className="mt-1 w-full rounded border border-gray-300 p-2"
               />
             </label>

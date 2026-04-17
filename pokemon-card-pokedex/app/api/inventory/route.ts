@@ -1,47 +1,81 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseServerClient, supabaseAdmin } from "@/lib/supabase/server";
 
-async function getAuthUserId(request: NextRequest) {
+async function getAuthUser(request: NextRequest) {
   try {
     const supabase = await createSupabaseServerClient();
     const {
       data: { user },
     } = await supabase.auth.getUser();
-    if (user?.id) return user.id;
+    if (user) return { id: user.id, email: user.email ?? null };
   } catch (err) {
     console.error("auth.getUser failed", err);
   }
 
-  // Fallback: permite pasar el userId por query string o body para el MVP.
   const fromQuery = request.nextUrl.searchParams.get("userId");
-  if (fromQuery) return fromQuery;
+  if (fromQuery) return { id: fromQuery, email: null };
   return null;
+}
+
+/**
+ * Convierte errores de Supabase (PostgrestError) en un mensaje legible para
+ * el frontend incluyendo hint/details cuando existan.
+ */
+function formatError(err: unknown): string {
+  if (!err) return "Error desconocido.";
+  if (err instanceof Error) return err.message;
+  if (typeof err === "object") {
+    const e = err as Record<string, unknown>;
+    const parts = [
+      e.message && String(e.message),
+      e.details && `Detalle: ${e.details}`,
+      e.hint && `Sugerencia: ${e.hint}`,
+      e.code && `Código: ${e.code}`,
+    ].filter(Boolean);
+    if (parts.length) return parts.join(" · ");
+  }
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return "Error desconocido.";
+  }
+}
+
+/**
+ * Asegura que exista una fila en `profiles` para el user_id. Usuarios creados
+ * vía Google OAuth a veces no tienen la fila si el trigger falló.
+ */
+async function ensureProfile(userId: string, email: string | null) {
+  const { error } = await supabaseAdmin
+    .from("profiles")
+    .upsert(
+      { id: userId, email: email ?? undefined },
+      { onConflict: "id", ignoreDuplicates: false }
+    );
+  if (error) {
+    console.error("ensureProfile error:", error);
+  }
 }
 
 export async function GET(request: NextRequest) {
   try {
-    const userId = await getAuthUserId(request);
-    if (!userId) {
-      return NextResponse.json(
-        { error: "No hay sesión activa." },
-        { status: 401 }
-      );
+    const user = await getAuthUser(request);
+    if (!user) {
+      return NextResponse.json({ error: "No hay sesión activa." }, { status: 401 });
     }
 
     const { data, error } = await supabaseAdmin
       .from("user_cards_detailed")
       .select("*")
-      .eq("user_id", userId)
+      .eq("user_id", user.id)
       .order("created_at", { ascending: false });
 
     if (error) throw error;
 
     return NextResponse.json({ items: data ?? [] });
   } catch (error) {
-    console.error(error);
-    const message =
-      error instanceof Error ? error.message : "No se pudo cargar el inventario.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error("GET /api/inventory error:", error);
+    return NextResponse.json({ error: formatError(error) }, { status: 500 });
   }
 }
 
@@ -49,8 +83,9 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
 
-    const authUserId = await getAuthUserId(request);
-    const userId = (body?.userId as string | undefined) || authUserId;
+    const authUser = await getAuthUser(request);
+    const userId = (body?.userId as string | undefined) || authUser?.id || null;
+    const email = authUser?.email ?? null;
 
     const externalId = body?.externalId as string | undefined;
     const productName = body?.productName as string | undefined;
@@ -63,12 +98,8 @@ export async function POST(request: NextRequest) {
     const estimatedUnitValue = Math.max(0, Number(body?.estimatedUnitValue || 0));
 
     if (!userId) {
-      return NextResponse.json(
-        { error: "No hay sesión activa." },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "No hay sesión activa." }, { status: 401 });
     }
-
     if (!externalId || !productName) {
       return NextResponse.json(
         { error: "Faltan datos (externalId, productName)." },
@@ -76,7 +107,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 1) Busca o crea la entrada en card_catalog.
+    // 0) Garantiza que el usuario tenga fila en profiles (FK de user_cards).
+    await ensureProfile(userId, email);
+
+    // 1) Busca o crea la entrada en card_catalog. Hacemos el insert en dos
+    //    pasos para poder reintentar sin las columnas nuevas si la migración
+    //    004 no está aplicada.
     const { data: existingCatalog, error: lookupError } = await supabaseAdmin
       .from("card_catalog")
       .select("id")
@@ -87,82 +123,129 @@ export async function POST(request: NextRequest) {
 
     let catalogId = existingCatalog?.id as string | undefined;
 
+    const catalogBase = {
+      pricecharting_product_id: externalId,
+      product_name: productName,
+      set_name: setName,
+      card_number: cardNumber,
+      official_image_url: imageUrl,
+    };
+    const catalogExtras = {
+      card_type: cardType,
+      last_market_price: estimatedUnitValue || null,
+      price_updated_at: estimatedUnitValue ? new Date().toISOString() : null,
+    };
+
     if (!catalogId) {
-      const { data: insertedCatalog, error: insertCatalogError } = await supabaseAdmin
+      let insertRes = await supabaseAdmin
         .from("card_catalog")
-        .insert({
-          pricecharting_product_id: externalId,
-          product_name: productName,
-          set_name: setName,
-          card_number: cardNumber,
-          card_type: cardType,
-          official_image_url: imageUrl,
-          last_market_price: estimatedUnitValue || null,
-          price_updated_at: estimatedUnitValue ? new Date().toISOString() : null,
-        })
+        .insert({ ...catalogBase, ...catalogExtras })
         .select("id")
         .single();
 
-      if (insertCatalogError) throw insertCatalogError;
-      catalogId = insertedCatalog.id;
+      if (insertRes.error && isMissingColumn(insertRes.error)) {
+        console.warn(
+          "card_catalog: columnas nuevas ausentes, reintentando sin ellas. " +
+            "Aplica la migración 004_card_enrichment.sql."
+        );
+        insertRes = await supabaseAdmin
+          .from("card_catalog")
+          .insert(catalogBase)
+          .select("id")
+          .single();
+      }
+
+      if (insertRes.error) throw insertRes.error;
+      catalogId = insertRes.data.id;
     } else {
       // Actualiza metadata y precio si venía en la request.
-      await supabaseAdmin
+      let updateRes = await supabaseAdmin
         .from("card_catalog")
         .update({
-          product_name: productName,
-          set_name: setName,
-          card_number: cardNumber,
-          card_type: cardType,
-          official_image_url: imageUrl,
-          ...(estimatedUnitValue
-            ? {
-                last_market_price: estimatedUnitValue,
-                price_updated_at: new Date().toISOString(),
-              }
-            : {}),
+          ...catalogBase,
+          ...catalogExtras,
           updated_at: new Date().toISOString(),
         })
         .eq("id", catalogId);
+      if (updateRes.error && isMissingColumn(updateRes.error)) {
+        updateRes = await supabaseAdmin
+          .from("card_catalog")
+          .update({ ...catalogBase, updated_at: new Date().toISOString() })
+          .eq("id", catalogId);
+      }
+      if (updateRes.error) console.error("card_catalog update warn:", updateRes.error);
     }
 
-    // 2) Inserta la carta en el inventario del usuario.
-    const { data, error } = await supabaseAdmin
+    // 2) Inserta la carta en el inventario del usuario (con reintento si la
+    //    migración 004 no añadió las columnas en user_cards).
+    const userCardFull = {
+      user_id: userId,
+      card_catalog_id: catalogId,
+      condition,
+      quantity,
+      estimated_unit_value: estimatedUnitValue,
+      set_name: setName,
+      card_number: cardNumber,
+      card_type: cardType,
+      image_url: imageUrl,
+    };
+    const userCardBasic = {
+      user_id: userId,
+      card_catalog_id: catalogId,
+      condition,
+      quantity,
+      estimated_unit_value: estimatedUnitValue,
+      image_url: imageUrl,
+    };
+
+    let userCardRes = await supabaseAdmin
       .from("user_cards")
-      .insert({
-        user_id: userId,
-        card_catalog_id: catalogId,
-        condition,
-        quantity,
-        estimated_unit_value: estimatedUnitValue,
-        set_name: setName,
-        card_number: cardNumber,
-        card_type: cardType,
-        image_url: imageUrl,
-      })
+      .insert(userCardFull)
       .select("*")
       .single();
 
-    if (error) throw error;
+    if (userCardRes.error && isMissingColumn(userCardRes.error)) {
+      console.warn(
+        "user_cards: columnas nuevas ausentes, reintentando sin ellas. " +
+          "Aplica la migración 004_card_enrichment.sql."
+      );
+      userCardRes = await supabaseAdmin
+        .from("user_cards")
+        .insert(userCardBasic)
+        .select("*")
+        .single();
+    }
 
-    // 3) Registra snapshot de precio para la línea temporal.
-    if (estimatedUnitValue > 0) {
-      await supabaseAdmin.from("price_snapshots").insert({
-        card_catalog_id: catalogId,
-        market_price: estimatedUnitValue,
-      });
+    if (userCardRes.error) throw userCardRes.error;
+
+    // 3) Registra snapshot de precio (si hay valor).
+    if (estimatedUnitValue > 0 && catalogId) {
+      const { error: snapshotErr } = await supabaseAdmin
+        .from("price_snapshots")
+        .insert({
+          card_catalog_id: catalogId,
+          market_price: estimatedUnitValue,
+        });
+      if (snapshotErr) console.error("price_snapshot warn:", snapshotErr);
     }
 
     return NextResponse.json({
       message: "Carta guardada correctamente.",
-      item: data,
+      item: userCardRes.data,
     });
   } catch (error) {
-    console.error(error);
-    const message =
-      error instanceof Error
-        ? error.message
-        : "No se pudo guardar la carta en inventario.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error("POST /api/inventory error:", error);
+    return NextResponse.json({ error: formatError(error) }, { status: 500 });
   }
+}
+
+function isMissingColumn(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as Record<string, unknown>;
+  const msg = String(e.message ?? "").toLowerCase();
+  return (
+    String(e.code ?? "") === "PGRST204" ||
+    String(e.code ?? "") === "42703" ||
+    msg.includes("column") && (msg.includes("does not exist") || msg.includes("no existe"))
+  );
 }

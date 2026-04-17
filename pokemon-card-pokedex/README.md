@@ -46,12 +46,34 @@ npm run dev
    - `supabase/migrations/002_policies.sql`
    - `supabase/migrations/003_indexes.sql`
    - `supabase/migrations/004_card_enrichment.sql`
-3. Authentication → habilita Email/Password.
-4. Copia `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` y `SUPABASE_SERVICE_ROLE_KEY`.
+3. Authentication → **Providers** → habilita **Email** (con o sin confirmación).
+4. Authentication → **URL Configuration**:
+   - **Site URL**: `http://localhost:3000` para desarrollo, o tu URL de Vercel en producción.
+   - **Redirect URLs**: añade `http://localhost:3000/auth/callback` y `https://tu-dominio.vercel.app/auth/callback`.
+5. Copia `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` y `SUPABASE_SERVICE_ROLE_KEY` a tu `.env.local`.
 
-## Pokemon Price Tracker
+### Habilitar Google OAuth
 
-Obtén un token desde <https://www.pokemonpricetracker.com/> y colócalo en `POKEMON_PRICE_TRACKER_API_KEY`.
+1. En Google Cloud Console (<https://console.cloud.google.com>) crea un proyecto, ve a **APIs & Services → Credentials → Create Credentials → OAuth client ID**, tipo **Web application**.
+2. En **Authorized redirect URIs** pega la URL que Supabase te muestra en el siguiente paso (tiene forma `https://<proyecto>.supabase.co/auth/v1/callback`).
+3. Copia el **Client ID** y **Client Secret**.
+4. En Supabase: Authentication → **Providers → Google**. Activa el proveedor y pega el Client ID y Secret.
+5. En la misma pantalla confirma que la redirect URL de Supabase coincide con la que pusiste en Google Cloud.
+6. Listo: el botón **Continuar con Google** en `/login` y `/register` ya funciona. Cada cuenta de Google queda como un usuario distinto en Supabase con su propio inventario.
+
+La RLS (fila por usuario) ya está configurada en `002_policies.sql`, así que cada usuario —sea con email o con Google— sólo puede ver, modificar y borrar sus propias cartas.
+
+## Pokémon TCG API (recomendada como principal)
+
+La identificación de cartas usa primero <https://pokemontcg.io/>. La API es
+gratuita y sin key funciona con rate limit bajo. Para producción regístrate
+en el sitio y copia tu key a `POKEMON_TCG_API_KEY`.
+
+## Pokemon Price Tracker (fallback)
+
+Obtén un token desde <https://www.pokemonpricetracker.com/> y colócalo en
+`POKEMON_PRICE_TRACKER_API_KEY`. Se usa si la Pokémon TCG API no encuentra la
+carta.
 
 ## Despliegue en Vercel
 
