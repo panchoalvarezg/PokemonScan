@@ -53,7 +53,14 @@ body {
   font-family: "Inter", "Segoe UI", system-ui, -apple-system, Arial,
     sans-serif;
   color: var(--text);
-  min-height: 100%;
+  height: 100%;
+}
+
+/* El scroll real ocurre dentro de .pokedex-screen; el body queda fijo para
+   que el chrome siempre ocupe el viewport entero. */
+html,
+body {
+  overflow: hidden;
 }
 
 /* Fondo "fuera" de la Pokédex: rojo profundo + textura diagonal sutil para
