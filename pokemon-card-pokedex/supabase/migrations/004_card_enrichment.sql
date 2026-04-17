@@ -14,7 +14,15 @@ alter table public.user_cards
   add column if not exists image_url text;
 
 -- Vista detallada enriquecida (se recrea para exponer los nuevos campos).
-create or replace view public.user_cards_detailed as
+--
+-- Importante: usamos drop + create en lugar de `create or replace`. Postgres
+-- sólo acepta `create or replace view` si la nueva definición añade columnas
+-- al final sin modificar las existentes; aquí cambiamos el tipo/expresión de
+-- `image_url` (pasa de `uc.image_url` a `coalesce(...)`), lo que dispara
+-- `ERROR 42P16: cannot drop columns from view`. Drop + create evita eso.
+drop view if exists public.user_cards_detailed cascade;
+
+create view public.user_cards_detailed as
 select
   uc.id,
   uc.user_id,

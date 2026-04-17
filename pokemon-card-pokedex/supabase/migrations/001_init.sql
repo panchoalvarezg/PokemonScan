@@ -80,7 +80,14 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();
 
-create or replace view public.inventory_valuation_summary as
+-- Usamos drop + create para las vistas en lugar de `create or replace view`.
+-- Esto hace que la migración sea re-ejecutable incluso si 004/005/007 ya
+-- modificaron `user_cards_detailed` con columnas extra o renombradas
+-- (`external_id`, `card_type`, `rarity`, `last_market_price`,
+-- `price_updated_at`). Sin esto, un re-run dispararía:
+--   ERROR 42P16: cannot drop columns from view
+drop view if exists public.inventory_valuation_summary cascade;
+create view public.inventory_valuation_summary as
 select
   user_id,
   count(*)::int as distinct_entries,
@@ -93,7 +100,8 @@ select
 from public.user_cards
 group by user_id;
 
-create or replace view public.user_cards_detailed as
+drop view if exists public.user_cards_detailed cascade;
+create view public.user_cards_detailed as
 select
   uc.id,
   uc.user_id,
