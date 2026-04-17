@@ -1,26 +1,30 @@
-export default function HomePage() {
+import ScannerClient from "@/components/ScannerClient";
+
+export default function Home() {
   return (
-    <main className="mx-auto max-w-4xl p-6">
-      <h1 className="mb-3 text-4xl font-bold">PokemonScan</h1>
-      <p className="mb-6 text-gray-700">
-        Escanea una carta Pokémon con la cámara, detecta el nombre y revisa sus variantes.
-      </p>
+    <div className="min-h-screen bg-[#f4f6fb]">
+      
+      {/* HEADER */}
+      <header className="bg-red-600 text-white p-4 shadow-lg">
+        <div className="max-w-6xl mx-auto flex justify-between items-center">
+          <h1 className="text-xl font-bold">Pokédex de Cartas</h1>
+          <span className="bg-white/20 px-3 py-1 rounded-full text-sm">
+            Pancho
+          </span>
+        </div>
+      </header>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <a href="/scanner" className="rounded-xl border p-5 hover:bg-gray-50">
-          <h2 className="mb-2 text-xl font-semibold">Ir al escáner</h2>
-          <p className="text-sm text-gray-600">
-            Abre la cámara, captura la carta y compara resultados.
-          </p>
-        </a>
+      {/* CONTENT */}
+      <main className="max-w-6xl mx-auto p-6">
+        <h2 className="text-2xl font-bold text-blue-700 mb-2">
+          Escanear cartas
+        </h2>
+        <p className="text-gray-500 mb-6">
+          Usa la cámara para detectar cartas y obtener su valor.
+        </p>
 
-        <a href="/inventory" className="rounded-xl border p-5 hover:bg-gray-50">
-          <h2 className="mb-2 text-xl font-semibold">Inventario</h2>
-          <p className="text-sm text-gray-600">
-            Aquí luego verás tus cartas guardadas.
-          </p>
-        </a>
-      </div>
-    </main>
+        <ScannerClient />
+      </main>
+    </div>
   );
 }
