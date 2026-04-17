@@ -1,42 +1,13 @@
-import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-export async function middleware(request: NextRequest) {
-  let response = NextResponse.next({ request });
-
-  // Sin variables de entorno no intentamos refrescar sesión (builds locales).
-  if (
-    !process.env.NEXT_PUBLIC_SUPABASE_URL ||
-    !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-  ) {
-    return response;
-  }
-
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          );
-          response = NextResponse.next({ request });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options)
-          );
-        },
-      },
-    }
-  );
-
-  // Refresca la cookie de sesión si es necesario.
-  await supabase.auth.getUser();
-
-  return response;
+/**
+ * Middleware vacío: el cliente guarda la sesión en localStorage y las API
+ * routes resuelven el usuario mediante `Authorization: Bearer <token>` (ver
+ * `lib/auth.ts`). Se deja la función y el matcher por si añadimos en el
+ * futuro protección por rutas.
+ */
+export async function middleware(_request: NextRequest) {
+  return NextResponse.next();
 }
 
 export const config = {

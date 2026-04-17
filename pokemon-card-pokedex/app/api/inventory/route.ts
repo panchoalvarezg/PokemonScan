@@ -1,21 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createSupabaseServerClient, supabaseAdmin } from "@/lib/supabase/server";
-
-async function getAuthUser(request: NextRequest) {
-  try {
-    const supabase = await createSupabaseServerClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (user) return { id: user.id, email: user.email ?? null };
-  } catch (err) {
-    console.error("auth.getUser failed", err);
-  }
-
-  const fromQuery = request.nextUrl.searchParams.get("userId");
-  if (fromQuery) return { id: fromQuery, email: null };
-  return null;
-}
+import { createAdminClient } from "@/lib/supabase/admin";
+import { getAuthUser } from "@/lib/auth";
 
 /**
  * Convierte errores de Supabase (PostgrestError) en un mensaje legible para
@@ -46,7 +31,8 @@ function formatError(err: unknown): string {
  * vía Google OAuth a veces no tienen la fila si el trigger falló.
  */
 async function ensureProfile(userId: string, email: string | null) {
-  const { error } = await supabaseAdmin
+  const admin = createAdminClient();
+  const { error } = await admin
     .from("profiles")
     .upsert(
       { id: userId, email: email ?? undefined },
@@ -57,6 +43,17 @@ async function ensureProfile(userId: string, email: string | null) {
   }
 }
 
+function isMissingColumn(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as Record<string, unknown>;
+  const msg = String(e.message ?? "").toLowerCase();
+  return (
+    String(e.code ?? "") === "PGRST204" ||
+    String(e.code ?? "") === "42703" ||
+    (msg.includes("column") && (msg.includes("does not exist") || msg.includes("no existe")))
+  );
+}
+
 export async function GET(request: NextRequest) {
   try {
     const user = await getAuthUser(request);
@@ -64,7 +61,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "No hay sesión activa." }, { status: 401 });
     }
 
-    const { data, error } = await supabaseAdmin
+    const admin = createAdminClient();
+    const { data, error } = await admin
       .from("user_cards_detailed")
       .select("*")
       .eq("user_id", user.id)
@@ -92,6 +90,7 @@ export async function POST(request: NextRequest) {
     const setName = (body?.setName as string | null | undefined) ?? null;
     const cardNumber = (body?.cardNumber as string | null | undefined) ?? null;
     const cardType = (body?.cardType as string | null | undefined) ?? null;
+    const rarity = (body?.rarity as string | null | undefined) ?? null;
     const imageUrl = (body?.imageUrl as string | null | undefined) ?? null;
     const condition = (body?.condition as string | undefined) || "near_mint";
     const quantity = Math.max(1, Number(body?.quantity || 1));
@@ -107,13 +106,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const admin = createAdminClient();
+
     // 0) Garantiza que el usuario tenga fila en profiles (FK de user_cards).
     await ensureProfile(userId, email);
 
-    // 1) Busca o crea la entrada en card_catalog. Hacemos el insert en dos
-    //    pasos para poder reintentar sin las columnas nuevas si la migración
-    //    004 no está aplicada.
-    const { data: existingCatalog, error: lookupError } = await supabaseAdmin
+    // 1) Busca o crea la entrada en card_catalog.
+    const { data: existingCatalog, error: lookupError } = await admin
       .from("card_catalog")
       .select("id")
       .eq("pricecharting_product_id", externalId)
@@ -132,12 +131,13 @@ export async function POST(request: NextRequest) {
     };
     const catalogExtras = {
       card_type: cardType,
+      rarity: rarity,
       last_market_price: estimatedUnitValue || null,
       price_updated_at: estimatedUnitValue ? new Date().toISOString() : null,
     };
 
     if (!catalogId) {
-      let insertRes = await supabaseAdmin
+      let insertRes = await admin
         .from("card_catalog")
         .insert({ ...catalogBase, ...catalogExtras })
         .select("id")
@@ -145,10 +145,9 @@ export async function POST(request: NextRequest) {
 
       if (insertRes.error && isMissingColumn(insertRes.error)) {
         console.warn(
-          "card_catalog: columnas nuevas ausentes, reintentando sin ellas. " +
-            "Aplica la migración 004_card_enrichment.sql."
+          "card_catalog: columnas nuevas ausentes, reintentando sin ellas. Aplica la migración 004."
         );
-        insertRes = await supabaseAdmin
+        insertRes = await admin
           .from("card_catalog")
           .insert(catalogBase)
           .select("id")
@@ -158,8 +157,7 @@ export async function POST(request: NextRequest) {
       if (insertRes.error) throw insertRes.error;
       catalogId = insertRes.data.id;
     } else {
-      // Actualiza metadata y precio si venía en la request.
-      let updateRes = await supabaseAdmin
+      let updateRes = await admin
         .from("card_catalog")
         .update({
           ...catalogBase,
@@ -168,7 +166,7 @@ export async function POST(request: NextRequest) {
         })
         .eq("id", catalogId);
       if (updateRes.error && isMissingColumn(updateRes.error)) {
-        updateRes = await supabaseAdmin
+        updateRes = await admin
           .from("card_catalog")
           .update({ ...catalogBase, updated_at: new Date().toISOString() })
           .eq("id", catalogId);
@@ -176,8 +174,7 @@ export async function POST(request: NextRequest) {
       if (updateRes.error) console.error("card_catalog update warn:", updateRes.error);
     }
 
-    // 2) Inserta la carta en el inventario del usuario (con reintento si la
-    //    migración 004 no añadió las columnas en user_cards).
+    // 2) Inserta la carta en el inventario del usuario.
     const userCardFull = {
       user_id: userId,
       card_catalog_id: catalogId,
@@ -187,6 +184,7 @@ export async function POST(request: NextRequest) {
       set_name: setName,
       card_number: cardNumber,
       card_type: cardType,
+      rarity: rarity,
       image_url: imageUrl,
     };
     const userCardBasic = {
@@ -198,18 +196,15 @@ export async function POST(request: NextRequest) {
       image_url: imageUrl,
     };
 
-    let userCardRes = await supabaseAdmin
+    let userCardRes = await admin
       .from("user_cards")
       .insert(userCardFull)
       .select("*")
       .single();
 
     if (userCardRes.error && isMissingColumn(userCardRes.error)) {
-      console.warn(
-        "user_cards: columnas nuevas ausentes, reintentando sin ellas. " +
-          "Aplica la migración 004_card_enrichment.sql."
-      );
-      userCardRes = await supabaseAdmin
+      console.warn("user_cards: columnas nuevas ausentes, reintentando sin ellas.");
+      userCardRes = await admin
         .from("user_cards")
         .insert(userCardBasic)
         .select("*")
@@ -220,7 +215,7 @@ export async function POST(request: NextRequest) {
 
     // 3) Registra snapshot de precio (si hay valor).
     if (estimatedUnitValue > 0 && catalogId) {
-      const { error: snapshotErr } = await supabaseAdmin
+      const { error: snapshotErr } = await admin
         .from("price_snapshots")
         .insert({
           card_catalog_id: catalogId,
@@ -237,15 +232,4 @@ export async function POST(request: NextRequest) {
     console.error("POST /api/inventory error:", error);
     return NextResponse.json({ error: formatError(error) }, { status: 500 });
   }
-}
-
-function isMissingColumn(err: unknown): boolean {
-  if (!err || typeof err !== "object") return false;
-  const e = err as Record<string, unknown>;
-  const msg = String(e.message ?? "").toLowerCase();
-  return (
-    String(e.code ?? "") === "PGRST204" ||
-    String(e.code ?? "") === "42703" ||
-    msg.includes("column") && (msg.includes("does not exist") || msg.includes("no existe"))
-  );
 }

@@ -46,6 +46,7 @@ npm run dev
    - `supabase/migrations/002_policies.sql`
    - `supabase/migrations/003_indexes.sql`
    - `supabase/migrations/004_card_enrichment.sql`
+   - `supabase/migrations/005_rarity_stats.sql`
 3. Authentication → **Providers** → habilita **Email** (con o sin confirmación).
 4. Authentication → **URL Configuration**:
    - **Site URL**: `http://localhost:3000` para desarrollo, o tu URL de Vercel en producción.
@@ -91,6 +92,7 @@ carta.
 | `/api/inventory` | POST | Guarda una carta en el inventario y registra un `price_snapshot`. |
 | `/api/inventory/[id]` | DELETE | Elimina una carta del inventario. |
 | `/api/valuation` | GET | Devuelve el resumen (entradas, totales, promedio). |
+| `/api/stats` | GET | Estadísticas del inventario: totales, tipo/rareza/condición/set predominante, top 5. |
 | `/api/prices/refresh` | GET/POST | Refresca precios contra la API y crea snapshots. |
 
 ## Estructura principal

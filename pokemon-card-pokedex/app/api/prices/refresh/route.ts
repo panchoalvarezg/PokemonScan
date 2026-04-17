@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { refreshCardPrice } from "@/lib/pokemon-price-tracker";
 
 /**
@@ -23,7 +23,9 @@ export async function GET(request: NextRequest) {
 
     const limit = Number(request.nextUrl.searchParams.get("limit") ?? 25);
 
-    const { data: catalog, error } = await supabaseAdmin
+    const admin = createAdminClient();
+
+    const { data: catalog, error } = await admin
       .from("card_catalog")
       .select("id, pricecharting_product_id, product_name, card_number, price_updated_at")
       .order("price_updated_at", { ascending: true, nullsFirst: true })
@@ -59,7 +61,7 @@ export async function GET(request: NextRequest) {
           continue;
         }
 
-        await supabaseAdmin
+        await admin
           .from("card_catalog")
           .update({
             last_market_price: variant.price,
@@ -68,13 +70,13 @@ export async function GET(request: NextRequest) {
           })
           .eq("id", row.id);
 
-        await supabaseAdmin.from("price_snapshots").insert({
+        await admin.from("price_snapshots").insert({
           card_catalog_id: row.id,
           market_price: variant.price,
         });
 
         // Sincroniza el valor unitario estimado del inventario del usuario.
-        await supabaseAdmin
+        await admin
           .from("user_cards")
           .update({
             estimated_unit_value: variant.price,

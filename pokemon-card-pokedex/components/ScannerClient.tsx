@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Tesseract from "tesseract.js";
 import { createClient } from "@/lib/supabase/client";
+import { apiFetch } from "@/lib/api-client";
 import { currency } from "@/lib/utils";
 
 type Variant = {
@@ -309,9 +310,8 @@ export default function ScannerClient() {
     setError("");
     setStatus("");
     try {
-      const res = await fetch("/api/inventory", {
+      const res = await apiFetch("/api/inventory", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           externalId: selected.externalId,
           productName: selected.name,

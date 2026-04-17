@@ -64,7 +64,7 @@ export type TCGVariantResult = {
   cardNumber: string;
   price: number | null;
   confidence: number;
-  source: "pokemontcg";
+  source: "pokemontcg" | "pokemonpricetracker";
 };
 
 export function extractTCGPrice(card: TCGCard): number | null {
@@ -226,6 +226,85 @@ export async function searchPokemonTCG(
 
   return [];
 }
+
+export type TCGSet = {
+  id: string;
+  name: string;
+  series?: string;
+  releaseDate?: string;
+  total?: number;
+  printedTotal?: number;
+};
+
+// Cache en memoria para el listado de sets (invalida al redeploy / cold start).
+let _setsCache: { data: TCGSet[]; ts: number } | null = null;
+const SET_CACHE_TTL_MS = 1000 * 60 * 60 * 12; // 12 horas
+
+/**
+ * Trae el catálogo completo de expansiones del Pokémon TCG con sus totales.
+ * Se cachea en memoria durante 12h porque cambia pocas veces al año.
+ */
+export async function getAllTCGSets(): Promise<TCGSet[]> {
+  if (_setsCache && Date.now() - _setsCache.ts < SET_CACHE_TTL_MS) {
+    return _setsCache.data;
+  }
+  const apiKey = process.env.POKEMON_TCG_API_KEY;
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (apiKey) headers["X-Api-Key"] = apiKey;
+
+  const response = await fetch(`${API_BASE_URL}/sets?pageSize=500`, {
+    headers,
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(`Pokemon TCG sets API ${response.status}`);
+  }
+  const json = (await response.json()) as { data?: TCGSet[] };
+  const sets = Array.isArray(json?.data) ? json.data : [];
+  _setsCache = { data: sets, ts: Date.now() };
+  return sets;
+}
+
+/**
+ * Devuelve un Map<nombreNormalizado, total> para buscar rápidamente el
+ * tamaño oficial de cada expansión al calcular completitud.
+ */
+export async function getSetTotalsByName(): Promise<Map<string, number>> {
+  const sets = await getAllTCGSets();
+  const map = new Map<string, number>();
+  for (const s of sets) {
+    if (s.name && typeof s.total === "number" && s.total > 0) {
+      map.set(normalizeSetName(s.name), s.total);
+    }
+  }
+  return map;
+}
+
+export function normalizeSetName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Lista canónica de los 11 tipos de energía del TCG moderno.
+ * Se usa para calcular "cobertura de tipos" en la pantalla de estadísticas.
+ */
+export const KNOWN_POKEMON_TYPES = [
+  "Colorless",
+  "Darkness",
+  "Dragon",
+  "Fairy",
+  "Fighting",
+  "Fire",
+  "Grass",
+  "Lightning",
+  "Metal",
+  "Psychic",
+  "Water",
+] as const;
 
 /**
  * Trae una carta por su id (ej. "sv4-125"). Útil para refrescar precios.

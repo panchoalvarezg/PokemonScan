@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { apiFetch } from "@/lib/api-client";
 import { currency } from "@/lib/utils";
 import type { ValuationSummary } from "@/types";
 
@@ -14,7 +15,7 @@ export function DashboardClient() {
 
   const loadSummary = useCallback(async (uid: string) => {
     try {
-      const response = await fetch(`/api/valuation?userId=${uid}`, {
+      const response = await apiFetch(`/api/valuation?userId=${uid}`, {
         cache: "no-store",
       });
       const data = await response.json();
