@@ -1,12 +1,8 @@
-export async function searchCard(name: string) {
-  const res = await fetch(
-    `https://www.pokemonpricetracker.com/api/v2/cards?search=${name}`,
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.POKEMON_PRICE_TRACKER_API_KEY}`,
-      },
-    }
-  );
+// Cliente de alto nivel re-exportado desde `lib/pokemon-price-tracker.ts`.
+// Se mantiene como shim para compatibilidad con posibles imports antiguos.
 
-  return res.json();
-}
+export {
+  searchCardVariants,
+  refreshCardPrice,
+  type VariantResult,
+} from "@/lib/pokemon-price-tracker";

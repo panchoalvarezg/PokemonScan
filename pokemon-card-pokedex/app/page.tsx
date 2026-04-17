@@ -1,30 +1,56 @@
-import ScannerClient from "@/components/ScannerClient";
+import Link from "next/link";
 
 export default function Home() {
   return (
-    <div className="min-h-screen bg-[#f4f6fb]">
-      
-      {/* HEADER */}
-      <header className="bg-red-600 text-white p-4 shadow-lg">
-        <div className="max-w-6xl mx-auto flex justify-between items-center">
-          <h1 className="text-xl font-bold">Pokédex de Cartas</h1>
-          <span className="bg-white/20 px-3 py-1 rounded-full text-sm">
-            Pancho
-          </span>
-        </div>
-      </header>
+    <main className="page">
+      <div className="container grid">
+        <section className="card" style={{ padding: "2.5rem" }}>
+          <h1 style={{ margin: 0, fontSize: "2.4rem" }}>
+            Pokedex TCG
+          </h1>
+          <p className="small" style={{ maxWidth: 680 }}>
+            Escanea cartas Pokémon, identifica su nombre, expansión y tipo,
+            encuéntralas en Pokemon Price Tracker y guárdalas en tu inventario
+            con su valor de mercado actual. Los precios se actualizan con el
+            tiempo automáticamente.
+          </p>
+          <div style={{ display: "flex", gap: "0.75rem", marginTop: "1rem" }}>
+            <Link className="button" href="/scanner">
+              📷 Escanear carta
+            </Link>
+            <Link className="button secondary" href="/inventory">
+              Ver inventario
+            </Link>
+            <Link className="button secondary" href="/dashboard">
+              Dashboard
+            </Link>
+          </div>
+        </section>
 
-      {/* CONTENT */}
-      <main className="max-w-6xl mx-auto p-6">
-        <h2 className="text-2xl font-bold text-blue-700 mb-2">
-          Escanear cartas
-        </h2>
-        <p className="text-gray-500 mb-6">
-          Usa la cámara para detectar cartas y obtener su valor.
-        </p>
-
-        <ScannerClient />
-      </main>
-    </div>
+        <section className="grid grid-3">
+          <div className="card">
+            <h3>1. Escanea</h3>
+            <p className="small">
+              Con tu cámara o una imagen. OCR con Tesseract extrae el texto y el
+              servidor detecta nombre, set y tipo.
+            </p>
+          </div>
+          <div className="card">
+            <h3>2. Encuentra</h3>
+            <p className="small">
+              Consultamos la API de Pokemon Price Tracker para encontrar la
+              carta y su precio actual.
+            </p>
+          </div>
+          <div className="card">
+            <h3>3. Inventario</h3>
+            <p className="small">
+              Guarda la carta en tu cuenta (Supabase) y mira la valorización
+              total. Refresca precios cuando quieras.
+            </p>
+          </div>
+        </section>
+      </div>
+    </main>
   );
 }

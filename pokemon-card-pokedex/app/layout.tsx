@@ -1,8 +1,9 @@
 import "./globals.css";
+import { Navbar } from "@/components/Navbar";
 
 export const metadata = {
-  title: "PokemonScan",
-  description: "Escáner de cartas Pokémon con cámara y variantes",
+  title: "Pokedex TCG",
+  description: "Escanea, inventaría y valoriza tus cartas Pokémon.",
 };
 
 export default function RootLayout({
@@ -12,7 +13,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="es" suppressHydrationWarning>
-      <body suppressHydrationWarning>{children}</body>
+      <body suppressHydrationWarning>
+        <Navbar />
+        {children}
+      </body>
     </html>
   );
 }

@@ -3,28 +3,40 @@ export type ScanResult = {
   detectedName: string;
   detectedNumber: string;
   detectedSet: string;
-};
-
-export type PriceChartingMatch = {
-  id: string;
-  productName: string;
-  consoleName?: string;
-  loosePrice?: number;
-  manualOnly?: boolean;
-  confidence: number;
+  detectedType: string;
+  detectedVariantHints: string[];
 };
 
 export type InventoryInput = {
-  pricechartingProductId: string;
+  externalId: string;
   productName: string;
   setName?: string;
   cardNumber?: string;
-  condition: string;
-  quantity: number;
-  estimatedUnitValue: number;
+  cardType?: string;
   imageUrl?: string;
+  condition?: string;
+  quantity?: number;
+  estimatedUnitValue?: number;
   notes?: string;
   forTrade?: boolean;
+};
+
+export type InventoryItem = {
+  id: string;
+  user_id: string;
+  product_name: string;
+  set_name: string | null;
+  card_number: string | null;
+  card_type: string | null;
+  image_url: string | null;
+  external_id: string | null;
+  condition: string;
+  quantity: number;
+  estimated_unit_value: string | number;
+  estimated_total_value: string | number;
+  last_market_price: string | number | null;
+  price_updated_at: string | null;
+  created_at: string;
 };
 
 export type ValuationSummary = {

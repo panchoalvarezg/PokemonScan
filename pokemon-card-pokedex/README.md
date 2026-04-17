@@ -1,22 +1,22 @@
-# Pokedex TCG
+# Pokedex TCG — PokemonScan
 
-Aplicación web para escanear cartas Pokémon, buscar coincidencias en PriceCharting, guardar cartas en un inventario por usuario y calcular el valor total estimado de la colección.
+Aplicación web que escanea cartas Pokémon, detecta su **nombre, expansión y tipo**, busca la carta en la API de **Pokemon Price Tracker** y la guarda en el **inventario** del usuario junto con su **valor de mercado actual**. El valor se refresca automáticamente con el tiempo.
 
-## Qué incluye
+- Framework: **Next.js 15 (App Router)** + **React 19** + **Tailwind CSS**
+- Autenticación y base de datos: **Supabase** (Auth + Postgres + RLS)
+- OCR: **Tesseract.js** (se ejecuta en el navegador)
+- Precios: **Pokemon Price Tracker API**
+- Hosting: **Vercel** (incluye Cron Job diario para refrescar precios)
 
-- Next.js con App Router
-- Supabase Auth + Postgres
-- SQL de migraciones con RLS
-- OCR con Tesseract.js
-- Búsqueda de candidatos en PriceCharting
-- Inventario por usuario
-- Dashboard contable con valor total estimado
+## Flujo de la app
 
-## Requisitos
-
-- Node.js 20+
-- Proyecto de Supabase
-- Token de API de PriceCharting
+1. El usuario abre `/scanner`, apunta la carta con la cámara (o sube una imagen).
+2. Tesseract.js lee el texto de la carta en el navegador.
+3. El servidor (`/api/scan`) detecta nombre, número, expansión, tipo y hints de variante.
+4. `/api/match` consulta **Pokemon Price Tracker** y devuelve candidatos con imagen y precio.
+5. El usuario confirma la variante correcta y la guarda en `/api/inventory`.
+6. `/inventory` y `/dashboard` muestran el inventario y el valor total, leyendo de Supabase.
+7. El Cron Job (o el botón "Refrescar precios") llama a `/api/prices/refresh` para actualizar valores.
 
 ## Variables de entorno
 
@@ -26,97 +26,90 @@ Copia `.env.example` a `.env.local` y completa:
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
-PRICECHARTING_API_TOKEN=
+POKEMON_PRICE_TRACKER_API_KEY=
 NEXT_PUBLIC_APP_URL=http://localhost:3000
+CRON_SECRET=          # opcional: exige Authorization: Bearer <valor> al cron
 ```
 
-## Instalación
+## Desarrollo local
 
 ```bash
 npm install
 npm run dev
 ```
 
-## Configuración de Supabase
+## Supabase
 
 1. Crea un proyecto en Supabase.
-2. En el SQL Editor ejecuta, en orden:
+2. En el SQL Editor ejecuta, **en orden**:
    - `supabase/migrations/001_init.sql`
    - `supabase/migrations/002_policies.sql`
    - `supabase/migrations/003_indexes.sql`
-3. En Authentication habilita email/password.
-4. Crea un bucket público si luego quieres subir imágenes desde la app.
+   - `supabase/migrations/004_card_enrichment.sql`
+3. Authentication → habilita Email/Password.
+4. Copia `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` y `SUPABASE_SERVICE_ROLE_KEY`.
 
-## Cómo usar
+## Pokemon Price Tracker
 
-### 1. Crear cuenta
-- Ve a `/register`
-- Crea un usuario con email y contraseña
+Obtén un token desde <https://www.pokemonpricetracker.com/> y colócalo en `POKEMON_PRICE_TRACKER_API_KEY`.
 
-### 2. Obtener el user id
-- En Supabase ve a Authentication > Users
-- Copia el UUID del usuario para probar las rutas del MVP
+## Despliegue en Vercel
 
-### 3. Escanear carta
-- Ve a `/scanner`
-- Pega una URL pública de una imagen de carta
-- Pega el user id
-- Ejecuta el escaneo y compara resultados
-- Guarda la mejor coincidencia en inventario
+1. Conecta el repositorio de GitHub a Vercel.
+2. Agrega las variables de entorno en **Project → Settings → Environment Variables**.
+3. Vercel detecta `vercel.json` y crea el **Cron Job** que refresca precios a diario (06:00 UTC).
 
-### 4. Revisar inventario
-- Ve a `/inventory`
-- Ingresa el user id
-- Carga el inventario y elimina registros si quieres
+## Endpoints de la API
 
-### 5. Ver valorización
-- Ve a `/dashboard`
-- Ingresa el user id
-- Revisa el valor total estimado de la colección
+| Ruta | Método | Descripción |
+| ---- | ------ | ----------- |
+| `/api/scan` | POST | Recibe `text` (OCR del cliente) y devuelve `detectedName`, `detectedNumber`, `detectedSet`, `detectedType`, `detectedVariantHints`. |
+| `/api/match` | POST | Busca variantes en Pokemon Price Tracker y las ordena por confianza. |
+| `/api/inventory` | GET | Devuelve el inventario del usuario autenticado. |
+| `/api/inventory` | POST | Guarda una carta en el inventario y registra un `price_snapshot`. |
+| `/api/inventory/[id]` | DELETE | Elimina una carta del inventario. |
+| `/api/valuation` | GET | Devuelve el resumen (entradas, totales, promedio). |
+| `/api/prices/refresh` | GET/POST | Refresca precios contra la API y crea snapshots. |
 
 ## Estructura principal
 
 ```text
 app/
   api/
-    scan/
-    match/
-    inventory/
-    valuation/
-  dashboard/
-  inventory/
-  scanner/
-  login/
-  register/
+    scan/route.ts
+    match/route.ts
+    inventory/route.ts
+    inventory/[id]/route.ts
+    valuation/route.ts
+    prices/refresh/route.ts
+  dashboard/page.tsx
+  inventory/page.tsx
+  scanner/page.tsx
+  login/page.tsx
+  register/page.tsx
+  page.tsx
 components/
+  ScannerClient.tsx
+  InventoryClient.tsx
+  DashboardClient.tsx
+  Navbar.tsx
+  AuthForm.tsx
 lib/
+  pokemon-price-tracker.ts
+  supabase/{client,server}.ts
+  utils.ts
 services/
+  scanner/parse-card-text.ts
 supabase/migrations/
+  001_init.sql
+  002_policies.sql
+  003_indexes.sql
+  004_card_enrichment.sql
 ```
 
-## Flujo de negocio
+## Próximos pasos sugeridos
 
-1. La app recibe una imagen.
-2. OCR extrae texto de la carta.
-3. Se intentan detectar nombre, número y set.
-4. Se consulta PriceCharting con esos criterios.
-5. Se muestran coincidencias ordenadas por score.
-6. El usuario confirma una coincidencia.
-7. Se guarda la carta en `user_cards` con su valor unitario estimado.
-8. La vista `inventory_valuation_summary` calcula el valor total del inventario del usuario.
-
-## Notas importantes
-
-- Este MVP usa **URL pública de imagen** para simplificar el primer despliegue.
-- Puedes reemplazarlo por subida directa a Supabase Storage en una segunda iteración.
-- PriceCharting tiene límite de uso, así que conviene cachear y refrescar precios por lotes más adelante.
-- El escaneo por OCR no será perfecto para todas las cartas; por eso el flujo incluye confirmación manual.
-
-## Próximas mejoras recomendadas
-
-- Subida de imágenes a Supabase Storage
-- Obtener automáticamente el `userId` desde la sesión en vez de pedirlo en pantalla
-- Historial de precios con `price_snapshots`
-- Filtros avanzados por rareza, set, tipo y condición
-- Módulo de intercambio entre usuarios
-- Script programado para refrescar precios
+- Subida de imágenes a Supabase Storage (hoy sólo guardamos la URL de la API).
+- Filtros por rareza / set / tipo en el inventario.
+- Histórico visual de precios (`price_snapshots` ya se persiste).
+- Intercambios entre usuarios (`for_trade` ya existe en el modelo).
