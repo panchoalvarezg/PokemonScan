@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { MarketMovers } from "@/components/MarketMovers";
+import { TopExpensiveCards } from "@/components/TopExpensiveCards";
 
 export default function Home() {
   return (
@@ -28,7 +28,7 @@ export default function Home() {
           </div>
         </section>
 
-        <MarketMovers />
+        <TopExpensiveCards />
 
         <section className="grid grid-3">
           <div className="card">

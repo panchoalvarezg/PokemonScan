@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-type Mover = {
+type TopCard = {
   rank: number;
   externalId: string;
   name: string;
@@ -11,16 +11,12 @@ type Mover = {
   rarity: string;
   type: string;
   imageUrl: string | null;
-  currentPrice: number;
-  previousPrice: number | null;
-  percentChange: number;
-  absoluteChange: number;
-  direction: "up" | "down";
+  price: number;
 };
 
 type Response = {
-  source: "api" | "snapshots" | "empty";
-  movers: Mover[];
+  count: number;
+  cards: TopCard[];
 };
 
 function formatUSD(value: number) {
@@ -31,12 +27,7 @@ function formatUSD(value: number) {
   });
 }
 
-function formatPercent(value: number) {
-  const sign = value >= 0 ? "+" : "";
-  return `${sign}${value.toFixed(1)}%`;
-}
-
-export function MarketMovers() {
+export function TopExpensiveCards() {
   const [data, setData] = useState<Response | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -45,7 +36,7 @@ export function MarketMovers() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/market-movers?limit=10", {
+        const res = await fetch("/api/top-cards?limit=10", {
           cache: "no-store",
         });
         const body = (await res.json()) as Response | { error: string };
@@ -74,59 +65,17 @@ export function MarketMovers() {
       style={{
         padding: "1.5rem",
         background:
-          "linear-gradient(180deg, rgba(17,24,39,0.04) 0%, rgba(255,255,255,1) 60%)",
+          "linear-gradient(180deg, rgba(244,225,74,0.10) 0%, rgba(255,255,255,1) 60%)",
       }}
     >
-      <header
-        style={{
-          display: "flex",
-          alignItems: "baseline",
-          justifyContent: "space-between",
-          gap: "1rem",
-          flexWrap: "wrap",
-          marginBottom: "1rem",
-        }}
-      >
-        <div>
-          <h2 style={{ margin: 0, fontSize: "1.4rem" }}>
-            📈 Top 10 — Movimientos de mercado 24h
-          </h2>
-          <p className="small" style={{ margin: "0.25rem 0 0", color: "var(--muted)" }}>
-            Cartas Pokémon con la mayor variación de precio en las últimas 24
-            horas (datos de Pokemon Price Tracker).
-          </p>
-        </div>
-        {data?.source ? (
-          <span
-            className="small"
-            style={{
-              background:
-                data.source === "api"
-                  ? "#dcfce7"
-                  : data.source === "snapshots"
-                    ? "#fef3c7"
-                    : "#f3f4f6",
-              color: "#1f2937",
-              padding: "0.15rem 0.55rem",
-              borderRadius: 999,
-              border: "1px solid rgba(0,0,0,0.08)",
-              whiteSpace: "nowrap",
-            }}
-            title={
-              data.source === "api"
-                ? "Datos en vivo de la API"
-                : data.source === "snapshots"
-                  ? "Calculado con tus snapshots locales"
-                  : "Sin datos aún"
-            }
-          >
-            {data.source === "api"
-              ? "Live"
-              : data.source === "snapshots"
-                ? "Interno"
-                : "Sin datos"}
-          </span>
-        ) : null}
+      <header style={{ marginBottom: "1rem" }}>
+        <h2 style={{ margin: 0, fontSize: "1.4rem" }}>
+          💰 Top 10 — Cartas Pokémon más caras
+        </h2>
+        <p className="small" style={{ margin: "0.25rem 0 0", color: "var(--muted)" }}>
+          Ranking en tiempo real según Pokemon Price Tracker. Precios en USD,
+          actualizados cada 10 minutos.
+        </p>
       </header>
 
       {loading ? (
@@ -138,11 +87,11 @@ export function MarketMovers() {
         </div>
       ) : error ? (
         <div className="error">Error: {error}</div>
-      ) : !data || data.movers.length === 0 ? (
+      ) : !data || data.cards.length === 0 ? (
         <div className="notice" style={{ padding: "1rem" }}>
-          Todavía no hay movimientos disponibles. El ranking se llenará cuando
-          la API externa exponga el período 24h o cuando acumules varios
-          snapshots de precio (cron diario de Vercel).
+          No se pudo obtener el ranking desde la API. Verifica que la variable
+          <code> POKEMON_PRICE_TRACKER_API_KEY </code> esté configurada en
+          Vercel.
         </div>
       ) : (
         <ol
@@ -154,9 +103,9 @@ export function MarketMovers() {
             gap: "0.6rem",
           }}
         >
-          {data.movers.map((m) => (
+          {data.cards.map((c) => (
             <li
-              key={`${m.rank}-${m.externalId}`}
+              key={`${c.rank}-${c.externalId}`}
               style={{
                 display: "grid",
                 gridTemplateColumns: "36px 56px 1fr auto",
@@ -181,14 +130,14 @@ export function MarketMovers() {
                   lineHeight: 1,
                 }}
               >
-                {m.rank}
+                {c.rank}
               </div>
 
-              {m.imageUrl ? (
+              {c.imageUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={m.imageUrl}
-                  alt={m.name}
+                  src={c.imageUrl}
+                  alt={c.name}
                   width={52}
                   height={72}
                   style={{
@@ -227,13 +176,18 @@ export function MarketMovers() {
                     textOverflow: "ellipsis",
                   }}
                 >
-                  {m.name}
+                  {c.name}
                 </div>
                 <div
                   className="small"
-                  style={{ color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+                  style={{
+                    color: "var(--muted)",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
                 >
-                  {[m.set, m.cardNumber && `#${m.cardNumber}`, m.rarity]
+                  {[c.set, c.cardNumber && `#${c.cardNumber}`, c.rarity]
                     .filter(Boolean)
                     .join(" · ")}
                 </div>
@@ -242,30 +196,13 @@ export function MarketMovers() {
               <div
                 style={{
                   textAlign: "right",
-                  display: "grid",
-                  gap: 2,
                   minWidth: 110,
+                  fontWeight: 800,
+                  color: "#15803d",
+                  fontSize: "1.05rem",
                 }}
               >
-                <div
-                  style={{
-                    fontWeight: 800,
-                    color: m.direction === "up" ? "#15803d" : "#b91c1c",
-                  }}
-                >
-                  {m.direction === "up" ? "▲" : "▼"} {formatPercent(m.percentChange)}
-                </div>
-                <div className="small" style={{ color: "#374151" }}>
-                  {formatUSD(m.currentPrice)}
-                </div>
-                {m.previousPrice != null ? (
-                  <div
-                    className="small"
-                    style={{ color: "var(--muted)", fontSize: "0.75rem" }}
-                  >
-                    antes {formatUSD(m.previousPrice)}
-                  </div>
-                ) : null}
+                {formatUSD(c.price)}
               </div>
             </li>
           ))}

@@ -234,14 +234,10 @@ export async function searchCardVariants(
 }
 
 /**
- * Estructura normalizada para el Top 10 de mayores movimientos de precio en
- * las últimas 24 h (https://www.pokemonpricetracker.com/market-movers).
- *
- * `percentChange` viene siempre en %, positivo si la carta sube y negativo
- * si baja. `previousPrice` puede ser null si la API no la expone (sólo trae
- * % y precio actual).
+ * Estructura normalizada para el Top N de cartas más caras según la API
+ * de pokemonpricetracker.com.
  */
-export type MarketMover = {
+export type TopExpensiveCard = {
   rank: number;
   externalId: string;
   name: string;
@@ -250,35 +246,52 @@ export type MarketMover = {
   rarity: string;
   type: string;
   imageUrl: string | null;
-  currentPrice: number;
-  previousPrice: number | null;
-  percentChange: number;
-  absoluteChange: number;
-  direction: "up" | "down";
+  price: number;
 };
 
 /**
- * Intenta obtener el Top N de cartas con mayor variación de precio en 24 h.
- *
- * La API de pokemonpricetracker.com no tiene un contrato público estable,
- * así que probamos varios endpoints plausibles y normalizamos el payload
- * (que varía bastante entre endpoints). Si ninguno responde con datos
- * usables, devolvemos [] y dejamos que el caller haga fallback a
- * `price_snapshots` propio.
+ * Fallback: lista curada de cartas históricamente famosas por su alto
+ * precio. Se consulta cada una por la API y nos quedamos con la variante
+ * más cara. Así, aunque la API no soporte "sort by price" globalmente,
+ * mostramos un Top 10 real y defendible.
  */
-export async function getMarketMovers(limit = 10): Promise<MarketMover[]> {
+const ICONIC_EXPENSIVE_CARDS: string[] = [
+  "Pikachu Illustrator",
+  "Charizard Base Set 1st Edition",
+  "Blastoise Galaxy Star Hologram",
+  "Magikarp Tamamushi University",
+  "Trophy Pikachu",
+  "Umbreon Gold Star",
+  "Espeon Gold Star",
+  "Lugia Neo Genesis 1st Edition",
+  "Rayquaza Gold Star",
+  "Mewtwo Base Set 1st Edition",
+  "Venusaur Base Set 1st Edition",
+  "Shining Charizard Neo Destiny",
+  "Charizard Shadowless",
+  "Blastoise Base Set 1st Edition",
+];
+
+/**
+ * Devuelve las N cartas con mayor precio actual. Probamos varias
+ * combinaciones de query porque pokemonpricetracker.com no documenta un
+ * contrato estable: `sort=-price`, `sortBy=price&order=desc`, etc. La
+ * primera respuesta con resultados válidos gana.
+ */
+export async function getTopExpensiveCards(limit = 10): Promise<TopExpensiveCard[]> {
   const apiKey = process.env.POKEMON_PRICE_TRACKER_API_KEY;
   if (!apiKey) {
-    console.warn("getMarketMovers: POKEMON_PRICE_TRACKER_API_KEY no definida");
+    console.warn("getTopExpensiveCards: POKEMON_PRICE_TRACKER_API_KEY no definida");
     return [];
   }
 
   const candidates = [
-    `${API_BASE_URL}/market-movers?period=24h&limit=${limit}&direction=gainers`,
-    `${API_BASE_URL}/market-movers?limit=${limit}`,
-    `${API_BASE_URL}/movers?period=24h&limit=${limit}`,
-    `${API_BASE_URL}/trending?period=24h&limit=${limit}`,
-    `${API_BASE_URL}/cards/trending?limit=${limit}`,
+    `${API_BASE_URL}/cards?sort=-price&limit=${limit}`,
+    `${API_BASE_URL}/cards?sortBy=price&order=desc&limit=${limit}`,
+    `${API_BASE_URL}/cards?orderBy=price&direction=desc&limit=${limit}`,
+    `${API_BASE_URL}/cards?sort=price_desc&limit=${limit}`,
+    `${API_BASE_URL}/cards/top?limit=${limit}`,
+    `${API_BASE_URL}/top-cards?limit=${limit}`,
   ];
 
   for (const url of candidates) {
@@ -289,44 +302,31 @@ export async function getMarketMovers(limit = 10): Promise<MarketMover[]> {
           Authorization: `Bearer ${apiKey}`,
           Accept: "application/json",
         },
-        // Vercel recomendó data-cache para endpoints no personalizados; aquí
-        // usamos revalidación por 10 min para no machacar al proveedor.
+        // Cache de 10 min: los precios no cambian a cada minuto.
         next: { revalidate: 600 },
       });
 
       if (!response.ok) continue;
       const data = await response.json();
 
-      const rawList: ApiCard[] = Array.isArray(data?.movers)
-        ? data.movers
-        : Array.isArray(data?.cards)
-          ? data.cards
-          : Array.isArray(data?.results)
-            ? data.results
-            : Array.isArray(data?.data)
-              ? data.data
-              : Array.isArray(data)
-                ? data
-                : [];
+      const rawList: ApiCard[] = Array.isArray(data?.cards)
+        ? data.cards
+        : Array.isArray(data?.results)
+          ? data.results
+          : Array.isArray(data?.data)
+            ? data.data
+            : Array.isArray(data)
+              ? data
+              : [];
 
       if (rawList.length === 0) continue;
 
       const normalized = rawList
-        .map<MarketMover | null>((card, idx) => {
-          const currentPrice = extractPrice(card);
-          const previousPrice = extractPreviousPrice(card);
-          const percent = extractPercentChange(card, currentPrice, previousPrice);
-
-          // Sin precio o sin % change la fila no vale para el ranking.
-          if (currentPrice == null || percent == null) return null;
-
-          const absChange =
-            previousPrice != null
-              ? currentPrice - previousPrice
-              : (currentPrice * percent) / 100;
-
+        .map<TopExpensiveCard | null>((card) => {
+          const price = extractPrice(card);
+          if (price == null) return null;
           return {
-            rank: idx + 1,
+            rank: 0,
             externalId: safeString(card.id || card.cardId || card.slug || card.name),
             name: safeString(
               card.name || card.cardName || card.title || "Carta sin nombre"
@@ -336,80 +336,74 @@ export async function getMarketMovers(limit = 10): Promise<MarketMover[]> {
             rarity: extractRarity(card),
             type: extractCardType(card),
             imageUrl: extractImageUrl(card),
-            currentPrice,
-            previousPrice,
-            percentChange: percent,
-            absoluteChange: absChange,
-            direction: percent >= 0 ? "up" : "down",
+            price,
           };
         })
-        .filter((row): row is MarketMover => row !== null)
-        .sort((a, b) => Math.abs(b.percentChange) - Math.abs(a.percentChange))
+        .filter((row): row is TopExpensiveCard => row !== null)
+        // Aunque pidamos sort=-price al server, garantizamos el orden
+        // localmente por si el endpoint lo ignora.
+        .sort((a, b) => b.price - a.price)
         .slice(0, limit)
-        // Re-numeramos tras el sort.
         .map((row, idx) => ({ ...row, rank: idx + 1 }));
 
       if (normalized.length > 0) return normalized;
     } catch (err) {
-      console.warn(`getMarketMovers: fallo en ${url}`, err);
+      console.warn(`getTopExpensiveCards: fallo en ${url}`, err);
       continue;
     }
   }
 
-  return [];
+  // Fallback: buscamos uno a uno los títulos icónicos y nos quedamos con
+  // la mejor variante de cada uno. Es más lento (N requests) pero devuelve
+  // datos reales de la API del proveedor — no hardcodeamos precios.
+  return getTopExpensiveFromIconicList(limit);
 }
 
 /**
- * Extrae el precio previo (de hace 24h) del payload heterogéneo. Se usan
- * varias convenciones de naming habituales.
+ * Consulta la API con cada título de la lista curada y devuelve las N
+ * cartas más caras resultantes. Las llamadas se ejecutan en paralelo con
+ * un `Promise.allSettled` para que si alguna falla no tumbe al resto.
  */
-function extractPreviousPrice(card: ApiCard): number | null {
-  const candidates = [
-    card.previousPrice,
-    card.priceYesterday,
-    card.price24hAgo,
-    card.prevPrice,
-    card.prices?.previous,
-    card.prices?.yesterday,
-    card.history?.previous,
-  ];
-  for (const value of candidates) {
-    if (typeof value === "number") return value;
-    if (typeof value === "string" && value.trim() && !isNaN(Number(value))) {
-      return Number(value);
-    }
-  }
-  return null;
-}
+async function getTopExpensiveFromIconicList(limit: number): Promise<TopExpensiveCard[]> {
+  const lookups = await Promise.allSettled(
+    ICONIC_EXPENSIVE_CARDS.map(async (query) => {
+      const variants = await searchCardVariants({
+        detectedName: query,
+        detectedNumber: "",
+        detectedSet: "",
+        extractedText: query,
+        detectedVariantHints: [],
+      });
+      // Nos quedamos con la variante más cara dentro de cada búsqueda.
+      const best = variants
+        .filter((v) => typeof v.price === "number" && v.price !== null)
+        .sort((a, b) => (b.price ?? 0) - (a.price ?? 0))[0];
+      return best ?? null;
+    })
+  );
 
-/**
- * Resuelve el % de cambio. Si la API lo expone directamente, se usa tal
- * cual; si sólo hay precio actual y previo, se calcula.
- */
-function extractPercentChange(
-  card: ApiCard,
-  current: number | null,
-  previous: number | null
-): number | null {
-  const direct = [
-    card.percentChange,
-    card.priceChangePercent,
-    card.change24hPercent,
-    card.changePercent,
-    card.change_percent,
-    card.percent_change_24h,
-    card.changePct,
-  ];
-  for (const value of direct) {
-    if (typeof value === "number") return value;
-    if (typeof value === "string" && value.trim() && !isNaN(Number(value))) {
-      return Number(value);
-    }
+  const rows: TopExpensiveCard[] = [];
+  for (const result of lookups) {
+    if (result.status !== "fulfilled" || !result.value) continue;
+    const v = result.value;
+    if (v.price == null) continue;
+    rows.push({
+      rank: 0,
+      externalId: v.externalId,
+      name: v.name,
+      set: v.set,
+      cardNumber: v.cardNumber,
+      rarity: v.rarity,
+      type: v.cardType,
+      imageUrl: v.imageUrl,
+      price: v.price,
+    });
   }
-  if (current != null && previous != null && previous !== 0) {
-    return ((current - previous) / previous) * 100;
-  }
-  return null;
+
+  return rows
+    .sort((a, b) => b.price - a.price)
+    .slice(0, limit)
+    .map((row, idx) => ({ ...row, rank: idx + 1 }));
 }
 
 /**
