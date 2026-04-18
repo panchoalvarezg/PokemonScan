@@ -16,6 +16,28 @@
 
 create extension if not exists pgcrypto;
 
+-- 1) Roles estándar de Supabase.
+--    Las migraciones 002_policies.sql y 008_community.sql usan
+--    `GRANT ... TO authenticated, anon` y `CREATE POLICY ... TO authenticated`.
+--    Esos roles existen automáticamente en Supabase hosted pero NO en un
+--    Postgres vanilla, por eso los creamos aquí.
+--    NOLOGIN porque no iniciamos sesión con ellos directamente — sólo sirven
+--    como marcador para las policies/grants.
+do $$
+begin
+  if not exists (select 1 from pg_roles where rolname = 'anon') then
+    create role anon nologin noinherit;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'authenticated') then
+    create role authenticated nologin noinherit;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'service_role') then
+    create role service_role nologin noinherit bypassrls;
+  end if;
+end;
+$$;
+
+-- 2) Schema auth con mínimo indispensable.
 create schema if not exists auth;
 
 create table if not exists auth.users (
@@ -38,3 +60,10 @@ create or replace function auth.jwt()
 returns jsonb
 language sql stable
 as $$ select null::jsonb $$;
+
+-- 3) El usuario owner de la BD (POSTGRES_USER en el compose) debe poder
+--    conceder privilegios a estos roles. Lo hacemos con un GRANT explícito
+--    para evitar el error 42501 ("must be member of role authenticated")
+--    cuando las migraciones corran con psql como superuser postgres pero
+--    quieran GRANT sobre objetos que serán propiedad de `pokescan`.
+grant anon, authenticated, service_role to current_user;
