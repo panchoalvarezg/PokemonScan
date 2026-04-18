@@ -22,6 +22,9 @@ export default function Home() {
             <Link className="button secondary" href="/inventory">
               Ver inventario
             </Link>
+            <Link className="button secondary" href="/community">
+              🌐 Comunidad
+            </Link>
             <Link className="button secondary" href="/dashboard">
               Dashboard
             </Link>

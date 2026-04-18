@@ -56,6 +56,9 @@ export function Navbar() {
           <Link href="/collections" style={linkStyle("/collections")}>
             Colecciones
           </Link>
+          <Link href="/community" style={linkStyle("/community")}>
+            Comunidad
+          </Link>
           <Link href="/dashboard" style={linkStyle("/dashboard")}>
             Dashboard
           </Link>

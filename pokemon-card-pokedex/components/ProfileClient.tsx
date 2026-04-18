@@ -18,6 +18,7 @@ type Profile = {
   discord_handle: string | null;
   phone: string | null;
   trade_notes: string | null;
+  is_public: boolean | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -51,6 +52,7 @@ type FormState = {
   phone: string;
   trade_notes: string;
   avatar_url: string;
+  is_public: boolean;
 };
 
 const EMPTY_FORM: FormState = {
@@ -63,6 +65,7 @@ const EMPTY_FORM: FormState = {
   phone: "",
   trade_notes: "",
   avatar_url: "",
+  is_public: false,
 };
 
 function profileToForm(p: Profile | null): FormState {
@@ -77,6 +80,7 @@ function profileToForm(p: Profile | null): FormState {
     phone: p.phone ?? "",
     trade_notes: p.trade_notes ?? "",
     avatar_url: p.avatar_url ?? "",
+    is_public: Boolean(p.is_public),
   };
 }
 
@@ -120,9 +124,21 @@ export function ProfileClient() {
     });
   }, [load]);
 
-  function onChange(field: keyof FormState) {
+  // onChange genérico para campos de texto. Los booleanos (is_public) usan
+  // su propio setter porque ChangeEvent.value es siempre string.
+  type StringField = {
+    [K in keyof FormState]: FormState[K] extends string ? K : never;
+  }[keyof FormState];
+  function onChange(field: StringField) {
     return (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
       setForm((f) => ({ ...f, [field]: e.target.value }));
+      setDirty(true);
+    };
+  }
+
+  function onToggle(field: "is_public") {
+    return (e: ChangeEvent<HTMLInputElement>) => {
+      setForm((f) => ({ ...f, [field]: e.target.checked }));
       setDirty(true);
     };
   }
@@ -226,7 +242,7 @@ export function ProfileClient() {
               onChange={onChange("full_name")}
             />
             <TextField
-              label="Usuario (único)"
+              label="@handle público (único)"
               placeholder="pancho"
               value={form.username}
               onChange={onChange("username")}
@@ -335,6 +351,55 @@ export function ProfileClient() {
             y pulsa la estrella en la carta que quieras ofrecer.
           </p>
         )}
+
+        {/* Toggle "publicar en Comunidad". Auto-guarda al cambiar para que
+            el usuario no tenga que pulsar otra vez "Guardar cambios" sólo
+            por flipear este switch. */}
+        <div
+          className="mt-4 rounded-lg border border-gray-200 p-3"
+          style={{ background: "rgba(244,225,74,0.08)" }}
+        >
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div style={{ maxWidth: 560 }}>
+              <h3 className="font-bold" style={{ margin: 0 }}>
+                Publicar mi carpeta en Comunidad
+              </h3>
+              <p className="small" style={{ margin: "0.25rem 0 0" }}>
+                Si lo activas, otros usuarios podrán ver tu @handle, país ·
+                ciudad, Discord (si lo pusiste) y las cartas marcadas para
+                intercambio. Tu email y teléfono NUNCA se exponen.
+              </p>
+              {!form.username && (
+                <p className="small" style={{ color: "var(--pk-red)", marginTop: 4 }}>
+                  ⚠️ Necesitas un @handle (campo &quot;Usuario único&quot;) para publicar.
+                </p>
+              )}
+            </div>
+            <label
+              className="flex items-center gap-2"
+              style={{ cursor: form.username ? "pointer" : "not-allowed" }}
+            >
+              <input
+                type="checkbox"
+                checked={form.is_public}
+                onChange={onToggle("is_public")}
+                disabled={!form.username}
+                style={{ width: 18, height: 18 }}
+              />
+              <span className="font-bold">
+                {form.is_public ? "Publicada" : "Oculta"}
+              </span>
+            </label>
+          </div>
+          {form.is_public && form.username && (
+            <p className="small mt-2">
+              🔗 Tu perfil público:{" "}
+              <a className="brand" href={`/community/${form.username}`}>
+                /community/{form.username}
+              </a>
+            </p>
+          )}
+        </div>
       </div>
 
       {/* El 'Resumen de cuenta' (cartas que faltan por expansión) vive en

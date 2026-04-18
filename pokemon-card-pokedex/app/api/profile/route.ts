@@ -32,6 +32,7 @@ type ProfileRow = {
   discord_handle?: string | null;
   phone?: string | null;
   trade_notes?: string | null;
+  is_public?: boolean | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -56,6 +57,10 @@ const EDITABLE_FIELDS = [
   "trade_notes",
   "avatar_url",
 ] as const;
+
+// Booleanos editables — se tratan aparte porque EDITABLE_FIELDS son strings
+// que se trimean y vacío → null.
+const EDITABLE_BOOL_FIELDS = ["is_public"] as const;
 
 async function ensureAndFetchProfile(
   userId: string,
@@ -220,6 +225,41 @@ export async function PATCH(request: NextRequest) {
         } else if (typeof raw === "string") {
           const trimmed = raw.trim();
           patch[field] = trimmed === "" ? null : trimmed;
+        }
+      }
+    }
+
+    for (const field of EDITABLE_BOOL_FIELDS) {
+      if (field in body) {
+        const raw = (body as Record<string, unknown>)[field];
+        if (typeof raw === "boolean") {
+          patch[field] = raw;
+        }
+      }
+    }
+
+    // Validación extra: no se puede publicar en Comunidad sin @handle.
+    if (patch.is_public === true) {
+      const nextUsername =
+        typeof patch.username === "string"
+          ? patch.username
+          : // Si no cambia en este PATCH, consultamos la fila existente.
+            null;
+      if (nextUsername === null) {
+        const admin = createAdminClient();
+        const { data: current } = await admin
+          .from("profiles")
+          .select("username")
+          .eq("id", user.id)
+          .single();
+        if (!current?.username) {
+          return NextResponse.json(
+            {
+              error:
+                "Necesitas un @handle (campo \"Usuario único\") antes de publicar tu carpeta en Comunidad.",
+            },
+            { status: 400 }
+          );
         }
       }
     }
