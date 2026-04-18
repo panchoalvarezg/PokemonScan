@@ -87,8 +87,16 @@ function detectVariantLabel(card: ApiCard) {
   );
 }
 
-function extractPrice(card: ApiCard) {
-  const candidates = [
+/**
+ * Intenta extraer un precio numérico de un objeto card libre. La API de
+ * pokemonpricetracker.com devuelve precios en varias formas según la
+ * categoría (holofoil, reverse, normal) y la fuente (TCGPlayer,
+ * CardMarket). Este extractor cubre los caminos comunes y, si no encaja
+ * ninguno, hace una búsqueda recursiva del mayor número plausible bajo
+ * claves tipo `market`, `mid`, `averageSellPrice`, `trendPrice`.
+ */
+function extractPrice(card: ApiCard): number | null {
+  const directCandidates = [
     card.price,
     card.marketPrice,
     card.rawPrice,
@@ -97,16 +105,76 @@ function extractPrice(card: ApiCard) {
     card.currentPrice,
     card.prices?.raw,
     card.prices?.market,
+    card.prices?.mid,
+    // Estructura TCGPlayer estilo pokemontcg.io:
+    card.prices?.holofoil?.market,
+    card.prices?.holofoil?.mid,
+    card.prices?.reverseHolofoil?.market,
+    card.prices?.reverseHolofoil?.mid,
+    card.prices?.normal?.market,
+    card.prices?.normal?.mid,
+    card.prices?.["1stEditionHolofoil"]?.market,
+    card.prices?.["unlimitedHolofoil"]?.market,
+    card.tcgplayer?.prices?.holofoil?.market,
+    card.tcgplayer?.prices?.holofoil?.mid,
+    card.tcgplayer?.prices?.reverseHolofoil?.market,
+    card.tcgplayer?.prices?.normal?.market,
+    card.tcgplayer?.prices?.["1stEditionHolofoil"]?.market,
+    // CardMarket:
+    card.cardmarket?.prices?.averageSellPrice,
+    card.cardmarket?.prices?.trendPrice,
+    card.cardmarket?.prices?.avg7,
+    card.cardmarket?.prices?.avg30,
   ];
 
-  for (const value of candidates) {
-    if (typeof value === "number") return value;
-    if (typeof value === "string" && value.trim() !== "" && !isNaN(Number(value))) {
-      return Number(value);
+  for (const value of directCandidates) {
+    const parsed = parseNumeric(value);
+    if (parsed != null) return parsed;
+  }
+
+  // Último recurso: escaneo recursivo buscando claves con "market", "mid",
+  // "price", "avg", "trend" y quedándonos con el valor numérico más alto.
+  const recursive = findMaxPriceDeep(card);
+  return recursive;
+}
+
+function parseNumeric(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
+  if (typeof value === "string") {
+    const trimmed = value.trim().replace(/[^0-9.-]/g, "");
+    if (trimmed && !isNaN(Number(trimmed))) {
+      const n = Number(trimmed);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+  }
+  return null;
+}
+
+/**
+ * Escanea recursivamente el objeto buscando cualquier par `clave: número`
+ * donde la clave sugiera que es un precio. Devuelve el mayor valor
+ * encontrado (nos quedamos con la variante más cara de cada carta, que es
+ * lo relevante para el Top 10).
+ */
+function findMaxPriceDeep(obj: unknown, depth = 0): number | null {
+  if (depth > 6 || obj == null) return null;
+  if (typeof obj !== "object") return null;
+
+  const priceKeyPattern = /market|mid|price|avg|trend|sell/i;
+  let best: number | null = null;
+
+  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      if (priceKeyPattern.test(key)) {
+        if (best == null || value > best) best = value;
+      }
+    } else if (typeof value === "object" && value !== null) {
+      const nested = findMaxPriceDeep(value, depth + 1);
+      if (nested != null && (best == null || nested > best)) best = nested;
     }
   }
 
-  return null;
+  return best;
 }
 
 function extractRarity(card: ApiCard) {
@@ -119,9 +187,14 @@ function extractRarity(card: ApiCard) {
 }
 
 function extractCardType(card: ApiCard) {
+  // pokemonpricetracker.com v2 devuelve `pokemonType: "Fire"` como string.
+  if (typeof card.pokemonType === "string") return card.pokemonType;
   if (typeof card.cardType === "string") return card.cardType;
   if (typeof card.type === "string") return card.type;
   if (Array.isArray(card.types) && typeof card.types[0] === "string") return card.types[0];
+  if (Array.isArray(card.pokemonTypes) && typeof card.pokemonTypes[0] === "string") {
+    return card.pokemonTypes[0];
+  }
   return "";
 }
 
@@ -194,13 +267,19 @@ export async function searchCardVariants(
     throw new Error(data?.message || data?.error || "La API devolvió un error.");
   }
 
-  const cards: ApiCard[] = Array.isArray(data?.cards)
-    ? data.cards
-    : Array.isArray(data?.results)
-      ? data.results
-      : Array.isArray(data)
-        ? data
-        : [];
+  // IMPORTANTE: pokemonpricetracker.com v2 responde con forma
+  // `{ data: [...cards...], metadata: {...} }`. Antes sólo mirábamos
+  // `data.cards` / `data.results` / `data`, por eso las búsquedas daban
+  // 200 OK pero 0 variantes.
+  const cards: ApiCard[] = Array.isArray(data?.data)
+    ? data.data
+    : Array.isArray(data?.cards)
+      ? data.cards
+      : Array.isArray(data?.results)
+        ? data.results
+        : Array.isArray(data)
+          ? data
+          : [];
 
   return cards
     .map<VariantResult>((card) => {
@@ -273,28 +352,38 @@ const ICONIC_EXPENSIVE_CARDS: string[] = [
 ];
 
 /**
- * Devuelve las N cartas con mayor precio actual. Probamos varias
- * combinaciones de query porque pokemonpricetracker.com no documenta un
- * contrato estable: `sort=-price`, `sortBy=price&order=desc`, etc. La
- * primera respuesta con resultados válidos gana.
+ * Devuelve las N cartas con mayor precio actual.
+ *
+ * La API de pokemonpricetracker.com v2 NO soporta parámetros de
+ * ordenamiento (`sort`, `sortBy`, `order` devuelven 400). Los únicos
+ * filtros permitidos son:
+ *   tcgPlayerId, setId, set, setName, search, rarity, cardType, artist,
+ *   minPrice, maxPrice
+ *
+ * Estrategia: pedimos `minPrice` alto primero (500 USD) y si no llegamos
+ * a `limit` cartas, bajamos el umbral progresivamente. Luego ordenamos
+ * nosotros client-side por `prices.market` descendente. Si aun así
+ * quedamos cortos, caemos al fallback de la lista icónica.
  */
 export async function getTopExpensiveCards(limit = 10): Promise<TopExpensiveCard[]> {
   const apiKey = process.env.POKEMON_PRICE_TRACKER_API_KEY;
   if (!apiKey) {
-    console.warn("getTopExpensiveCards: POKEMON_PRICE_TRACKER_API_KEY no definida");
-    return [];
+    // Lanzamos en vez de devolver [] para que /api/top-cards pueda
+    // transmitirle al frontend el motivo exacto del fallo.
+    throw new Error(
+      "POKEMON_PRICE_TRACKER_API_KEY no está configurada en el entorno (añádela en Vercel → Settings → Environment Variables y redeploy)."
+    );
   }
 
-  const candidates = [
-    `${API_BASE_URL}/cards?sort=-price&limit=${limit}`,
-    `${API_BASE_URL}/cards?sortBy=price&order=desc&limit=${limit}`,
-    `${API_BASE_URL}/cards?orderBy=price&direction=desc&limit=${limit}`,
-    `${API_BASE_URL}/cards?sort=price_desc&limit=${limit}`,
-    `${API_BASE_URL}/cards/top?limit=${limit}`,
-    `${API_BASE_URL}/top-cards?limit=${limit}`,
-  ];
+  // Umbrales en USD; probamos de más caro a menos caro hasta juntar
+  // resultados suficientes.
+  const minPriceThresholds = [500, 200, 50];
+  const pageSize = 50;
 
-  for (const url of candidates) {
+  const pool = new Map<string, TopExpensiveCard>();
+
+  for (const minPrice of minPriceThresholds) {
+    const url = `${API_BASE_URL}/cards?minPrice=${minPrice}&limit=${pageSize}`;
     try {
       const response = await fetch(url, {
         method: "GET",
@@ -306,51 +395,67 @@ export async function getTopExpensiveCards(limit = 10): Promise<TopExpensiveCard
         next: { revalidate: 600 },
       });
 
-      if (!response.ok) continue;
+      if (!response.ok) {
+        // 400 con detalle de filtros — lo logueamos y seguimos con el
+        // siguiente umbral.
+        const body = await response.text().catch(() => "");
+        console.warn(
+          `getTopExpensiveCards: ${url} → ${response.status} ${body.slice(0, 200)}`
+        );
+        continue;
+      }
+
       const data = await response.json();
 
-      const rawList: ApiCard[] = Array.isArray(data?.cards)
-        ? data.cards
-        : Array.isArray(data?.results)
-          ? data.results
-          : Array.isArray(data?.data)
-            ? data.data
+      // El proveedor responde `{ data: [...], metadata: {...} }`.
+      const rawList: ApiCard[] = Array.isArray(data?.data)
+        ? data.data
+        : Array.isArray(data?.cards)
+          ? data.cards
+          : Array.isArray(data?.results)
+            ? data.results
             : Array.isArray(data)
               ? data
               : [];
 
-      if (rawList.length === 0) continue;
+      for (const card of rawList) {
+        const price = extractPrice(card);
+        if (price == null) continue;
+        const externalId = safeString(
+          card.id || card.cardId || card.slug || card.name
+        );
+        if (!externalId) continue;
+        // Evitamos duplicados entre umbrales.
+        if (pool.has(externalId)) continue;
+        pool.set(externalId, {
+          rank: 0,
+          externalId,
+          name: safeString(
+            card.name || card.cardName || card.title || "Carta sin nombre"
+          ),
+          set: safeString(card.set || card.setName || card.expansion),
+          cardNumber: extractCardNumber(card),
+          rarity: extractRarity(card),
+          type: extractCardType(card),
+          imageUrl: extractImageUrl(card),
+          price,
+        });
+      }
 
-      const normalized = rawList
-        .map<TopExpensiveCard | null>((card) => {
-          const price = extractPrice(card);
-          if (price == null) return null;
-          return {
-            rank: 0,
-            externalId: safeString(card.id || card.cardId || card.slug || card.name),
-            name: safeString(
-              card.name || card.cardName || card.title || "Carta sin nombre"
-            ),
-            set: safeString(card.set || card.setName || card.expansion),
-            cardNumber: extractCardNumber(card),
-            rarity: extractRarity(card),
-            type: extractCardType(card),
-            imageUrl: extractImageUrl(card),
-            price,
-          };
-        })
-        .filter((row): row is TopExpensiveCard => row !== null)
-        // Aunque pidamos sort=-price al server, garantizamos el orden
-        // localmente por si el endpoint lo ignora.
-        .sort((a, b) => b.price - a.price)
-        .slice(0, limit)
-        .map((row, idx) => ({ ...row, rank: idx + 1 }));
-
-      if (normalized.length > 0) return normalized;
+      // Si ya tenemos al menos el doble del limit, podemos parar y
+      // recortar — así no pagamos la llamada más barata.
+      if (pool.size >= limit * 2) break;
     } catch (err) {
       console.warn(`getTopExpensiveCards: fallo en ${url}`, err);
       continue;
     }
+  }
+
+  if (pool.size > 0) {
+    return Array.from(pool.values())
+      .sort((a, b) => b.price - a.price)
+      .slice(0, limit)
+      .map((row, idx) => ({ ...row, rank: idx + 1 }));
   }
 
   // Fallback: buscamos uno a uno los títulos icónicos y nos quedamos con
