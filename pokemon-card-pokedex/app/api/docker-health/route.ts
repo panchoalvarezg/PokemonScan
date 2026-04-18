@@ -77,6 +77,7 @@ export async function GET() {
         "user_cards",
         "scan_uploads",
         "price_snapshots",
+        "otp_audit",
       ];
       const CORE_VIEWS = [
         "community_profiles",

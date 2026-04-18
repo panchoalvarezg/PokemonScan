@@ -21,6 +21,15 @@ export function AuthForm({ mode }: { mode: Mode }) {
   const [otpSent, setOtpSent] = useState(false);
   const [otpLoading, setOtpLoading] = useState(false);
 
+  // Estado de la auditoría paralela que guardamos cifrada en Docker.
+  // No afecta al flujo real de login (lo hace Supabase) — es un indicador
+  // visual de que la BD dockerizada está recibiendo los eventos OTP.
+  const [auditInfo, setAuditInfo] = useState<{
+    audited: boolean;
+    expiresAt?: string;
+    previewCode?: string;
+  } | null>(null);
+
   const router = useRouter();
 
   // Si el callback de OAuth falló, muestra el mensaje en la propia página.
@@ -112,6 +121,29 @@ export function AuthForm({ mode }: { mode: Mode }) {
     setMessage(
       "Código enviado. Revisa tu correo (y la carpeta de spam) e introduce los 6 dígitos."
     );
+
+    // Auditoría paralela en Docker (best-effort, no bloquea el flujo real).
+    // Si el endpoint o Docker están caídos, simplemente no se registra nada.
+    void fetch("/api/auth/otp/audit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "send",
+        email: otpEmail,
+        purpose: mode === "register" ? "signup" : "login",
+      }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        setAuditInfo({
+          audited: Boolean(data?.audited),
+          expiresAt: data?.expiresAt,
+          previewCode: data?.previewCode,
+        });
+      })
+      .catch(() => {
+        /* silencio: auditoría opcional */
+      });
   }
 
   /**
@@ -137,10 +169,35 @@ export function AuthForm({ mode }: { mode: Mode }) {
 
     if (verifyError) {
       setError(verifyError.message);
+      // Registramos el fallo en Docker (incrementa attempts). No bloquea.
+      void fetch("/api/auth/otp/audit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "failed",
+          email: otpEmail,
+          purpose: mode === "register" ? "signup" : "login",
+        }),
+      }).catch(() => {});
       return;
     }
 
     setMessage("Sesión iniciada con código.");
+
+    // Auditoría: intentamos "verificar" nuestro código paralelo con el que
+    // el usuario escribió. Normalmente *no* coincidirá (Supabase generó otro),
+    // pero la entrada de la tabla queda marcada como intento.
+    void fetch("/api/auth/otp/audit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "verify",
+        email: otpEmail,
+        code: otpCode.trim(),
+        purpose: mode === "register" ? "signup" : "login",
+      }),
+    }).catch(() => {});
+
     router.push("/dashboard");
     router.refresh();
   }
@@ -150,6 +207,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
     setOtpCode("");
     setError("");
     setMessage("");
+    setAuditInfo(null);
   }
 
   async function signInWithGoogle() {
@@ -318,6 +376,52 @@ export function AuthForm({ mode }: { mode: Mode }) {
             >
               Cambiar correo o reenviar
             </button>
+            {auditInfo ? (
+              <div
+                className="small"
+                style={{
+                  marginTop: 6,
+                  padding: "6px 10px",
+                  borderRadius: 6,
+                  background: auditInfo.audited ? "#ecfeff" : "#f3f4f6",
+                  color: auditInfo.audited ? "#0e7490" : "#6b7280",
+                  border: `1px solid ${
+                    auditInfo.audited ? "#67e8f9" : "#e5e7eb"
+                  }`,
+                  lineHeight: 1.4,
+                }}
+              >
+                {auditInfo.audited ? (
+                  <>
+                    🔐 Auditoría cifrada guardada en Docker (AES-256 + bcrypt).
+                    {auditInfo.expiresAt ? (
+                      <>
+                        {" "}
+                        Expira:{" "}
+                        <code>
+                          {new Date(auditInfo.expiresAt).toLocaleTimeString(
+                            "es-CL"
+                          )}
+                        </code>
+                      </>
+                    ) : null}
+                    {auditInfo.previewCode ? (
+                      <>
+                        <br />
+                        Código interno (sólo dev):{" "}
+                        <code>{auditInfo.previewCode}</code> — NO es el que
+                        recibirás por email.
+                      </>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    Auditoría paralela deshabilitada (sin DATABASE_URL o
+                    OTP_ENCRYPTION_KEY). El login por Supabase funciona igual.
+                  </>
+                )}
+              </div>
+            ) : null}
           </>
         )}
       </form>

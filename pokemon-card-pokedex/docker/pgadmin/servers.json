@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Pokedex Local (Docker)",
+      "Group": "Servers",
+      "Host": "db",
+      "Port": 5432,
+      "MaintenanceDB": "pokemoncardpokedex",
+      "Username": "pokescan",
+      "SSLMode": "prefer",
+      "Comment": "Postgres dockerizado del stack pokemon-card-pokedex. Password: pokescan_dev (ver docker-compose.yml)."
+    }
+  }
+}

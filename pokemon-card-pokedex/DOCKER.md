@@ -190,7 +190,17 @@ Mirá los logs: `docker compose logs db`. Si ves `role "authenticated" does not 
 El puerto 5433 ya está ocupado. O apagás lo que lo usa (`lsof -i :5433` en macOS/Linux) o cambiás el mapeo en `docker-compose.yml` a `"5434:5432"`.
 
 **Las migraciones no se aplicaron (faltan tablas)**
-El init sólo corre en el **primer boot**. Si añadís una migración nueva después, ejecutá `docker compose down -v && docker compose up -d` (borra el volumen y re-bootstrappea).
+El init sólo corre en el **primer boot**. Si añadís una migración nueva después, tenés dos opciones:
+
+- **Recomendado (no pierde datos):** aplicarla contra el volumen vivo con el helper:
+
+  ```bash
+  ./docker/db/apply-migration.sh 009_otp_audit.sql
+  ```
+
+  El script hace `docker compose exec db psql …` con `ON_ERROR_STOP=1`. Todas nuestras migraciones usan `if not exists` / `create or replace`, así que re-aplicarlas es idempotente.
+
+- **Si querés empezar limpio (borra todos los datos):** `docker compose down -v && docker compose up -d`. Vas a perder cualquier carta, perfil y registro OTP que tuvieras.
 
 **pgAdmin dice "server disconnected"**
 Estás usando `localhost` o `127.0.0.1` dentro del contenedor de pgAdmin. El host correcto desde ese contenedor es `db` (el nombre del servicio en el compose).
@@ -281,7 +291,106 @@ reemplazo de Supabase — es una replicación síncrona best-effort.
 Esto prueba **inequívocamente** que el Docker está siendo usado por la app
 web en tiempo real, no es un contenedor estático con schema vacío.
 
-## 9. Evidencia para la rúbrica
+## 9. OTP cifrado en Docker (auditoría paralela con pgcrypto)
+
+La migración `009_otp_audit.sql` añade la tabla `public.otp_audit`, que
+registra cada vez que un usuario pide o verifica un OTP desde el formulario
+de login. El código que guardamos aquí **no** es el de Supabase (Supabase
+nunca nos lo expone). Es un código paralelo que genera la app y que queda
+**cifrado con AES-256** (`pgp_sym_encrypt`) y con **hash bcrypt**
+(`crypt(..., gen_salt('bf', 10))`) en Docker. Propósito:
+
+- **Demostrar manejo de datos sensibles cifrados** en la BD dockerizada.
+- **Auditar** intentos de login (email, IP, User-Agent, timestamps, attempts).
+- **Documentar** el uso real de `pgcrypto` — extensión ya habilitada por `000_auth_stub.sql`.
+
+El flujo de autenticación real (mail → código → JWT) lo sigue haciendo
+Supabase. Si la auditoría falla (p.ej. Docker apagado), el login sigue
+funcionando normalmente.
+
+### Activación
+
+1. En `.env.local` añade una clave simétrica de al menos 16 caracteres
+   (idealmente 32 bytes hex aleatorios):
+
+   ```bash
+   OTP_ENCRYPTION_KEY=$(openssl rand -hex 32)
+   echo "OTP_ENCRYPTION_KEY=$OTP_ENCRYPTION_KEY" >> .env.local
+   ```
+
+2. Reaplica las migraciones si tu volumen es antiguo:
+
+   ```bash
+   docker compose down -v
+   docker compose up -d
+   ```
+
+3. Reinicia el dev server para que Next cargue `OTP_ENCRYPTION_KEY`:
+
+   ```bash
+   npm run dev
+   ```
+
+### Cómo funciona
+
+| Paso | En la app | En Docker |
+|------|-----------|-----------|
+| El usuario escribe su email en `/login` y pulsa "Enviarme un código". | `supabase.auth.signInWithOtp(...)` envía el mail. En paralelo, `fetch("/api/auth/otp/audit", {action:"send"})`. | `insert into otp_audit (code_encrypted = pgp_sym_encrypt(...), code_hash = crypt(..., gen_salt('bf',10)), expires_at = now() + interval '10 minutes')`. |
+| Usuario escribe el código de 6 dígitos recibido por email. | `supabase.auth.verifyOtp(...)` valida con Supabase. Ademas `fetch(..., {action:"verify"})` para registrar el intento. | `update attempts = attempts + 1`. Si `crypt(code, code_hash) = code_hash` → `succeeded_at = now()`. |
+| Supabase rechaza el código (caducado, mal escrito). | `fetch(..., {action:"failed"})`. | `update attempts = attempts + 1` sobre el registro activo. |
+
+### Inspeccionar en pgAdmin
+
+Abre pgAdmin (http://localhost:5050) → conecta al server local → query
+tool sobre `pokemoncardpokedex`:
+
+```sql
+-- Ver registros en bruto: el código es bytea ilegible
+select id, email, purpose, attempts, max_attempts,
+       created_at, expires_at, used_at, succeeded_at,
+       encode(code_encrypted, 'hex') as cifrado,
+       code_hash
+  from public.otp_audit
+ order by created_at desc
+ limit 20;
+
+-- Descifrar con la clave (úsalo sólo en demo; NO expongas la key en queries
+-- de producción — deja huella en los logs de Postgres):
+select email,
+       pgp_sym_decrypt(code_encrypted, 'REEMPLAZA_POR_TU_OTP_ENCRYPTION_KEY') as codigo_plano,
+       created_at, expires_at, attempts, succeeded_at
+  from public.otp_audit
+ order by created_at desc
+ limit 5;
+```
+
+El hash bcrypt se ve así: `$2a$10$Zn...` (prefijo `$2a$10$` = algoritmo
+blowfish, cost 10).
+
+### Limitaciones honestas
+
+- El código cifrado **no es** el que el usuario recibe por email
+  (eso lo guarda Supabase en su propia BD gestionada).
+- `OTP_ENCRYPTION_KEY` debe gestionarse como cualquier secreto: no se
+  commitea al repo, va en `.env.local` y, en producción, en las variables
+  de entorno del hosting (Vercel → Settings → Environment Variables).
+- Si quieres rotar la clave sin perder los registros, tendrías que re-cifrar
+  (`update set code_encrypted = pgp_sym_encrypt(pgp_sym_decrypt(code_encrypted, 'vieja'), 'nueva')`).
+- La tabla usa RLS habilitada sin policies → desde `anon`/`authenticated`
+  no es visible. Sólo el owner de la BD (service_role o `pokescan`) lee.
+
+### Demo en vivo
+
+1. Login con email (OTP). El banner "🔐 Auditoría cifrada guardada en Docker"
+   confirma que el audit corrió. En dev aparece el `previewCode` interno.
+2. pgAdmin → `select * from public.otp_audit order by created_at desc limit 1;`
+   → ves el email, el `code_encrypted` en bytea y el `code_hash` bcrypt.
+3. Ejecuta `pgp_sym_decrypt(code_encrypted, 'TU_CLAVE')` → obtienes el
+   mismo `previewCode` que mostró la UI.
+4. Confirma que `crypt(codigo_plano, code_hash) = code_hash` → prueba que
+   el bcrypt también validó correctamente.
+
+## 10. Evidencia para la rúbrica
 
 Al profesor/evaluador le mostrás:
 1. El archivo `docker-compose.yml` (arriba del repo).

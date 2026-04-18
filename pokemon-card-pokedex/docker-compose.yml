@@ -43,13 +43,19 @@ services:
     container_name: pokescan-pgadmin
     restart: unless-stopped
     environment:
-      # 🔥 CORREGIDO AQUÍ
       PGADMIN_DEFAULT_EMAIL: admin@admin.com
       PGADMIN_DEFAULT_PASSWORD: admin
       PGADMIN_CONFIG_SERVER_MODE: "False"
       PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+      # servers.json pre-registra el server "Pokedex Local (Docker)" apuntando
+      # al contenedor `db`. pgpass guarda la contraseña para que la conexión
+      # sea de un solo clic, sin escribir credenciales a mano.
+      PGADMIN_SERVER_JSON_FILE: /pgadmin4/servers.json
     ports:
       - "5050:80"
+    volumes:
+      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
+      - ./docker/pgadmin/pgpass:/pgadmin4/pgpass:ro
     depends_on:
       db:
         condition: service_healthy
