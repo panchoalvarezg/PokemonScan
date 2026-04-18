@@ -2,7 +2,7 @@ import "./globals.css";
 import { Navbar } from "@/components/Navbar";
 
 export const metadata = {
-  title: "Pokedex TCG",
+  title: "CARD4ALL",
   description: "Escanea, inventaría y valoriza tus cartas Pokémon.",
 };
 
@@ -31,7 +31,7 @@ export default function RootLayout({
               <span className="led yellow" />
               <span className="led green" />
             </div>
-            <div className="pokedex-title">Pokédex TCG · Nº 001</div>
+            <div className="pokedex-title">CARD4ALL · Nº 001</div>
           </div>
 
           <div className="pokedex-screen">
@@ -51,7 +51,7 @@ export default function RootLayout({
               <span />
               <span className="empty" />
             </div>
-            <span>Cartridge · v1.0 · Indigo League Edition</span>
+            <span>Programación Profesional TICS420-1-2026 version</span>
             <div className="pokedex-buttons">
               <span className="pill" />
               <span className="round red" />

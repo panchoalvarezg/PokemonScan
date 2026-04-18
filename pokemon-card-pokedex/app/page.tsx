@@ -7,7 +7,7 @@ export default function Home() {
       <div className="container grid">
         <section className="card" style={{ padding: "2.5rem" }}>
           <h1 style={{ margin: 0, fontSize: "2.4rem" }}>
-            Pokedex TCG
+            CARD4ALL
           </h1>
           <p className="small" style={{ maxWidth: 680 }}>
             Escanea cartas Pokémon, identifica su nombre, expansión y tipo,

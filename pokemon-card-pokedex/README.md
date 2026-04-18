@@ -1,4 +1,4 @@
-# Pokedex TCG — PokemonScan
+# CARD4ALL — PokemonScan
 
 Aplicación web que escanea cartas Pokémon, detecta su **nombre, expansión y tipo**, busca la carta en la API de **Pokemon Price Tracker** y la guarda en el **inventario** del usuario junto con su **valor de mercado actual**. El valor se refresca automáticamente con el tiempo.
 

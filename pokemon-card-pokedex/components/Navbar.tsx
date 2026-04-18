@@ -44,7 +44,7 @@ export function Navbar() {
     <nav className="nav">
       <div className="container nav-inner">
         <Link href="/" className="brand">
-          Pokédex TCG
+          CARD4ALL
         </Link>
         <div className="nav-links">
           <Link href="/scanner" style={linkStyle("/scanner")}>

@@ -1,4 +1,4 @@
-# Despliegue dockerizado — Pokédex TCG
+# Despliegue dockerizado — CARD4ALL
 
 Cumple el requisito de evaluación *"Despliegue dockerizado en Docker Compose (al menos Base de Datos)"*.
 
