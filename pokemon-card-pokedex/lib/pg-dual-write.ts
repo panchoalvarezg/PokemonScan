@@ -35,6 +35,11 @@ function dualEnabled(): boolean {
 /**
  * Envoltorio "best-effort": loggea y traga cualquier error. Nunca debe
  * romper la request principal hacia Supabase.
+ *
+ * Cuando `DATABASE_URL` está definida (se *esperaba* que funcione el dual-write)
+ * logueamos el stack trace completo y en nivel `error` — así el problema es
+ * visible en la consola del dev server. Cuando no está definida, el helper
+ * ni siquiera se invoca (dualEnabled() = false).
  */
 async function tryDual(
   label: string,
@@ -43,10 +48,26 @@ async function tryDual(
   if (!dualEnabled()) return;
   try {
     await fn();
+    // Log de éxito para poder ver en la consola del dev server que el
+    // dual-write efectivamente se ejecutó tras cada request.
+    console.log(`[pg-dual-write:${label}] ok`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    // No ensuciamos los logs con stack traces completos — con el mensaje basta.
-    console.warn(`[pg-dual-write:${label}] skipped:`, msg);
+    const code =
+      err && typeof err === "object" && "code" in err
+        ? String((err as { code?: unknown }).code)
+        : undefined;
+    const detail =
+      err && typeof err === "object" && "detail" in err
+        ? String((err as { detail?: unknown }).detail)
+        : undefined;
+    console.error(
+      `[pg-dual-write:${label}] FAILED:`,
+      msg,
+      code ? `(code=${code})` : "",
+      detail ? `detail=${detail}` : "",
+      err instanceof Error && err.stack ? "\n" + err.stack : ""
+    );
   }
 }
 

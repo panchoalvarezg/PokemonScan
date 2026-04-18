@@ -53,10 +53,31 @@ function StatusBadge({ status }: { status: Response["status"] }) {
   );
 }
 
+type WriteTestStep = {
+  step: string;
+  sql: string;
+  rowsAffected?: number;
+  rowsReturned?: number;
+};
+
+type WriteTestResponse =
+  | { ok: true; message: string; steps: WriteTestStep[] }
+  | {
+      ok: false;
+      failedStep: string;
+      error: string;
+      code?: string;
+      detail?: string;
+      hint?: string;
+      steps?: WriteTestStep[];
+    };
+
 export function DockerStatusClient() {
   const [data, setData] = useState<Response | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshCount, setRefreshCount] = useState(0);
+  const [writeTest, setWriteTest] = useState<WriteTestResponse | null>(null);
+  const [writeTestLoading, setWriteTestLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -71,6 +92,27 @@ export function DockerStatusClient() {
       });
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const runWriteTest = useCallback(async () => {
+    setWriteTestLoading(true);
+    setWriteTest(null);
+    try {
+      const res = await fetch("/api/docker-write-test", { cache: "no-store" });
+      const body = (await res.json()) as WriteTestResponse;
+      setWriteTest(body);
+      // Refrescamos counts después del test (aunque limpie al final, el
+      // badge de latencia puede cambiar).
+      setRefreshCount((n) => n + 1);
+    } catch (err) {
+      setWriteTest({
+        ok: false,
+        failedStep: "network",
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setWriteTestLoading(false);
     }
   }, []);
 
@@ -237,6 +279,97 @@ export function DockerStatusClient() {
         </section>
       )}
 
+      {data.status === "ok" && (
+        <section className="card" style={{ marginTop: 16, padding: "1rem" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              flexWrap: "wrap",
+            }}
+          >
+            <div>
+              <h3 style={{ margin: 0 }}>Diagnóstico de dual-write</h3>
+              <p className="small" style={{ margin: "4px 0 0", color: "var(--muted)" }}>
+                Ejecuta un insert → read → delete contra el Docker para aislar
+                si el dual-write de la app tiene un problema (schema, FK,
+                permisos…). No deja datos residuales.
+              </p>
+            </div>
+            <button
+              className="button"
+              onClick={runWriteTest}
+              disabled={writeTestLoading}
+            >
+              {writeTestLoading ? "Probando…" : "Probar escritura"}
+            </button>
+          </div>
+
+          {writeTest && (
+            <div
+              style={{
+                marginTop: 12,
+                padding: 12,
+                borderRadius: 8,
+                background: writeTest.ok ? "#dcfce7" : "#fee2e2",
+                color: writeTest.ok ? "#15803d" : "#991b1b",
+                fontFamily: "monospace",
+                fontSize: "0.85rem",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              }}
+            >
+              <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                {writeTest.ok ? "✅ OK" : `❌ Falló en: ${writeTest.failedStep}`}
+              </div>
+              {writeTest.ok ? (
+                <>
+                  <div>{writeTest.message}</div>
+                  {writeTest.steps.length > 0 && (
+                    <ul style={{ margin: "6px 0 0 1rem", padding: 0 }}>
+                      {writeTest.steps.map((s, i) => (
+                        <li key={i}>
+                          {s.step}
+                          {s.rowsAffected !== undefined
+                            ? ` → rowsAffected=${s.rowsAffected}`
+                            : ""}
+                          {s.rowsReturned !== undefined
+                            ? ` → rowsReturned=${s.rowsReturned}`
+                            : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div>
+                    <strong>error:</strong> {writeTest.error}
+                  </div>
+                  {writeTest.code && (
+                    <div>
+                      <strong>code:</strong> {writeTest.code}
+                    </div>
+                  )}
+                  {writeTest.detail && (
+                    <div>
+                      <strong>detail:</strong> {writeTest.detail}
+                    </div>
+                  )}
+                  {writeTest.hint && (
+                    <div>
+                      <strong>hint:</strong> {writeTest.hint}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
       <section className="card" style={{ marginTop: 16, padding: "1rem" }}>
         <h3 style={{ margin: 0 }}>Cómo probarlo paso a paso</h3>
         <ol className="small" style={{ margin: "0.5rem 0 0 1rem" }}>
@@ -258,8 +391,14 @@ export function DockerStatusClient() {
             los conteos de filas.
           </li>
           <li>
-            Como prueba de que son tablas reales, inserta datos con el seed
-            del <code>DOCKER.md</code> y refresca: las filas suben.
+            Pulsa <strong>Probar escritura</strong>. Si marca ✅ OK, el
+            dual-write funciona y el problema es otro (dev server sin
+            reiniciar, código antiguo cacheado). Si falla, el mensaje indica
+            exactamente qué paso/schema/FK está mal.
+          </li>
+          <li>
+            Tras confirmar ✅ OK, añade/edita cartas en la app real y vuelve a
+            refrescar <code>/docker-status</code>: los conteos deben subir.
           </li>
         </ol>
       </section>
