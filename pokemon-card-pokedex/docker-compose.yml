@@ -27,7 +27,6 @@ services:
       POSTGRES_PASSWORD: pokescan_dev
       POSTGRES_DB: pokemoncardpokedex
     ports:
-      # Exponemos 5433 en el host para no chocar con un Postgres local en 5432.
       - "5433:5432"
     volumes:
       - pokescan_pgdata:/var/lib/postgresql/data
@@ -44,9 +43,9 @@ services:
     container_name: pokescan-pgadmin
     restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@pokescan.local
+      # 🔥 CORREGIDO AQUÍ
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
       PGADMIN_DEFAULT_PASSWORD: admin
-      # Modo desktop: no pide login y recuerda el server.
       PGADMIN_CONFIG_SERVER_MODE: "False"
       PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
     ports:
@@ -63,12 +62,9 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
-    # Cargamos el .env.local tal cual para no duplicar variables. Si falta,
-    # `docker compose` dará un warning; crea el archivo desde .env.example.
     env_file:
       - .env.local
     environment:
-      # URL directa a la BD local para scripts de seed/backup dentro del contenedor.
       DATABASE_URL: postgres://pokescan:pokescan_dev@db:5432/pokemoncardpokedex
       NODE_ENV: production
     depends_on:
