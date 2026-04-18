@@ -155,13 +155,16 @@ export async function GET() {
 }
 
 /**
- * Warmup opcional — no se usa por ahora pero deja el import como
- * "referenced" para evitar warnings de dead-code.
+ * Warmup opcional — no se exporta porque Next.js App Router sólo acepta
+ * exports conocidos (GET/POST/etc.) en archivos de ruta. Se deja como
+ * función privada para poder llamarlo desde un script futuro si hiciera
+ * falta pre-calentar el pool en un cron.
  */
-export async function _warmup() {
+async function _warmup() {
   try {
     await dockerQuery("select 1");
   } catch {
     /* noop */
   }
 }
+void _warmup;

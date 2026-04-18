@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthUser } from "@/lib/auth";
+import { dualInsertUserCard } from "@/lib/pg-dual-write";
 
 /**
  * Convierte errores de Supabase (PostgrestError) en un mensaje legible para
@@ -222,6 +223,37 @@ export async function POST(request: NextRequest) {
           market_price: estimatedUnitValue,
         });
       if (snapshotErr) console.error("price_snapshot warn:", snapshotErr);
+    }
+
+    // 4) Dual-write hacia el Postgres del docker-compose local (best-effort).
+    //    Reusa los UUIDs de Supabase para que un PATCH/DELETE posterior afecte
+    //    la misma fila en ambas BDs. Si DATABASE_URL no está definida o el
+    //    contenedor está apagado, esta llamada se convierte en no-op.
+    if (catalogId && userCardRes.data?.id) {
+      await dualInsertUserCard({
+        id: userCardRes.data.id,
+        userId,
+        userEmail: email,
+        catalog: {
+          id: catalogId,
+          externalId,
+          productName,
+          setName,
+          cardNumber,
+          cardType,
+          rarity,
+          imageUrl,
+          lastMarketPrice: estimatedUnitValue || null,
+        },
+        condition,
+        quantity,
+        estimatedUnitValue,
+        setName,
+        cardNumber,
+        cardType,
+        rarity,
+        imageUrl,
+      });
     }
 
     return NextResponse.json({

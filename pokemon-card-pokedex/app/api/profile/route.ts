@@ -5,6 +5,7 @@ import {
   getSetTotalsByName,
   normalizeSetName,
 } from "@/lib/pokemon-tcg-api";
+import { dualEnsureProfile, dualUpdateProfile } from "@/lib/pg-dual-write";
 
 /**
  * /api/profile
@@ -154,6 +155,10 @@ export async function GET(request: NextRequest) {
 
     const profile = await ensureAndFetchProfile(user.id, user.email ?? null);
 
+    // Replica la existencia del perfil al Docker para que /docker-status
+    // muestre al menos 1 fila en profiles incluso antes de añadir cartas.
+    await dualEnsureProfile(user.id, user.email ?? null);
+
     const admin = createAdminClient();
     const { data: cards, error } = await admin
       .from("user_cards_detailed")
@@ -289,6 +294,10 @@ export async function PATCH(request: NextRequest) {
       .single();
 
     if (error) throw error;
+
+    // Replica el patch al Docker (best-effort). El helper internamente hace
+    // un ensure + update usando sólo las claves del whitelist.
+    await dualUpdateProfile(user.id, user.email ?? null, patch);
 
     return NextResponse.json({ profile: data });
   } catch (error) {

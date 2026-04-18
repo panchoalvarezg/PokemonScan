@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { refreshCardPrice } from "@/lib/pokemon-price-tracker";
+import { dualRefreshCatalogPrice } from "@/lib/pg-dual-write";
 
 /**
  * Endpoint que vuelve a consultar la API de Pokemon Price Tracker y actualiza
@@ -83,6 +84,12 @@ export async function GET(request: NextRequest) {
             updated_at: new Date().toISOString(),
           })
           .eq("card_catalog_id", row.id);
+
+        // Dual-write al Docker: refresca catálogo + snapshot + user_cards.
+        await dualRefreshCatalogPrice(
+          row.pricecharting_product_id,
+          variant.price
+        );
 
         results.push({
           id: row.id,

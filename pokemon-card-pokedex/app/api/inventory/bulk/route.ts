@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthUser } from "@/lib/auth";
+import { dualUpdateUserCardsBulk } from "@/lib/pg-dual-write";
 
 /**
  * PATCH /api/inventory/bulk
@@ -62,6 +63,9 @@ export async function PATCH(request: NextRequest) {
       .select("id, for_trade");
 
     if (error) throw error;
+
+    // Replica el bulk update al Docker (best-effort).
+    await dualUpdateUserCardsBulk(cleanIds, patch);
 
     return NextResponse.json({
       updated: data?.length ?? 0,

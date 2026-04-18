@@ -242,15 +242,56 @@ curl http://localhost:3000/api/docker-health | jq
 | `BD apagada` | ECONNREFUSED — contenedor no corre | `docker compose up -d` |
 | `Error` | Password mala / base inexistente | Revisar valores del compose |
 
-## 8. Evidencia para la rúbrica
+## 8. Dual-write — la app guarda en Docker automáticamente
+
+A partir de `lib/pg-dual-write.ts`, cada vez que la app escribe en Supabase
+también escribe **la misma fila** en el Postgres dockerizado. No es un
+reemplazo de Supabase — es una replicación síncrona best-effort.
+
+### Rutas afectadas
+
+| Ruta | Qué hace | Qué replica al Docker |
+|------|----------|-----------------------|
+| `POST /api/inventory` | Añade una carta al inventario | `profiles`, `card_catalog`, `user_cards`, `price_snapshots` |
+| `PATCH /api/inventory/[id]` | Edita condición / cantidad / for_trade | `user_cards` (update) |
+| `DELETE /api/inventory/[id]` | Elimina carta del inventario | `user_cards` (delete) |
+| `PATCH /api/inventory/bulk` | Marca varias como for_trade | `user_cards` (bulk update) |
+| `GET /api/profile` | Visita al perfil | `profiles` (ensure) |
+| `PATCH /api/profile` | Edita datos del perfil (handle, país, is_public…) | `profiles` (update) |
+| `GET /api/prices/refresh` | Cron que actualiza precios | `card_catalog`, `price_snapshots`, `user_cards` |
+
+### Garantías
+
+- **Best-effort**: si `DATABASE_URL` no está definida o el contenedor está apagado, el dual-write se convierte en no-op. La request a Supabase NO falla.
+- **Idempotente**: todo usa `on conflict do update`. Se puede replayar el mismo evento sin romper constraints.
+- **Mismos UUIDs**: la fila en Docker tiene el mismo `id` que en Supabase, así que un PATCH/DELETE afecta la misma fila en ambas BDs.
+- **Respeta FKs**: inserta automáticamente el stub en `auth.users` y el perfil en `profiles` antes de tocar `user_cards` o `price_snapshots`.
+- **Sólo en dev local**: en Vercel no hay `DATABASE_URL`, así que en producción el dual-write es completamente inerte.
+
+### Cómo demostrarlo
+
+1. `docker compose up -d` y `npm run dev` (con `DATABASE_URL` en `.env.local`).
+2. Abre `/docker-status` → los conteos empiezan en 0.
+3. Abre `/inventory` en la app y añade una carta (o escanea una).
+4. Refresca `/docker-status` → `profiles`, `card_catalog`, `user_cards` y `price_snapshots` ahora muestran 1.
+5. Edita la carta (cambia cantidad / condición) y refresca → los valores cambian en Docker.
+6. Elimínala → los conteos vuelven a bajar.
+7. Abre pgAdmin y ejecutá `select * from public.user_cards_detailed;` → vas a ver la carta con TODOS los campos (nombre, set, rareza, tipo, valor), igual que en Supabase.
+
+Esto prueba **inequívocamente** que el Docker está siendo usado por la app
+web en tiempo real, no es un contenedor estático con schema vacío.
+
+## 9. Evidencia para la rúbrica
 
 Al profesor/evaluador le mostrás:
 1. El archivo `docker-compose.yml` (arriba del repo).
 2. `docker compose up -d` corriendo con `docker compose ps` en verde.
 3. Screenshot de pgAdmin o del `\dt` listando las 5 tablas + 4 vistas.
-4. Ejecución del seed del punto 5 y verificación de que aparece en
-   `community_cards`.
+4. **Demo en vivo de dual-write**: añades una carta desde `/inventory`, luego
+   muestras `/docker-status` con conteos en `1`, luego pgAdmin con la fila
+   real. Esto es la evidencia más fuerte (los datos los puso la app, no
+   un seed manual).
 5. **Screenshot de `/docker-status`** con badge `Conectado`, versión de
-   Postgres y los conteos de filas. Esto prueba que la app web usa la BD
-   dockerizada.
+   Postgres y los conteos de filas con datos reales. Esto prueba que la app
+   web usa la BD dockerizada.
 6. Este `DOCKER.md` como documentación del despliegue.
